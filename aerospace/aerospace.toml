@@ -16,12 +16,12 @@ key-mapping.preset = 'qwerty'
 on-focused-monitor-changed = ['move-mouse monitor-lazy-center']
 
 [gaps]
-inner.horizontal = 4
-inner.vertical =   4
-outer.left =       6
-outer.bottom =     6
-outer.top =        6
-outer.right =      6
+inner.horizontal = 2
+inner.vertical =   2
+outer.left =       2
+outer.bottom =     2
+outer.top =        2
+outer.right =      2
 
 
 [mode.main.binding]
@@ -52,6 +52,7 @@ alt-6 = 'workspace 6'
 alt-7 = 'workspace 7'
 alt-8 = 'workspace 8'
 alt-9 = 'workspace 9'
+alt-0 = 'workspace 0'
 
 alt-shift-1 = 'move-node-to-workspace 1'
 alt-shift-2 = 'move-node-to-workspace 2'
@@ -62,5 +63,6 @@ alt-shift-6 = 'move-node-to-workspace 6'
 alt-shift-7 = 'move-node-to-workspace 7'
 alt-shift-8 = 'move-node-to-workspace 8'
 alt-shift-9 = 'move-node-to-workspace 9'
+alt-shift-0 = 'move-node-to-workspace 0'
 
 alt-tab = 'workspace-back-and-forth'

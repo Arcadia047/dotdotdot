@@ -2,14 +2,25 @@ local wezterm = require("wezterm")
 local config = wezterm.config_builder()
 local act = wezterm.action
 
+-- One explicit switch keeps WezTerm, tmux, and Neovim on the same palette.
+-- Change this to "light" to use Catppuccin Latte everywhere on the next launch.
+local theme_mode = "dark"
+local color_schemes = {
+	dark = "Catppuccin Macchiato",
+	light = "Catppuccin Latte",
+}
+
 -- Font configuration
 config.font = wezterm.font({
 	family = "Maple Mono NF",
 	harfbuzz_features = { "calt=0" }, -- Disable ligatures
 })
-config.font_size = 26.0
+config.font_size = 20.0
 
-config.color_scheme = "tokyonight"
+config.color_scheme = color_schemes[theme_mode]
+config.set_environment_variables = {
+	DOTFILES_THEME = theme_mode,
+}
 
 -- Appearance
 config.hide_tab_bar_if_only_one_tab = true
@@ -26,7 +37,9 @@ config.window_padding = {
 }
 
 -- Scrollback
-config.scrollback_lines = 2000
+config.scrollback_lines = 10000
+config.window_close_confirmation = "AlwaysPrompt"
+config.skip_close_confirmation_for_processes_named = {}
 
 -- Key bindings
 config.keys = {
@@ -39,11 +52,15 @@ config.keys = {
 	{
 		key = "k",
 		mods = "CMD",
-		action = wezterm.action.ClearScrollback("ScrollbackOnly"),
-		-- action = wezterm.action.Multiple({
-		-- 	act.ClearScrollback("ScrollbackAndViewport"),
-		-- 	act.SendKey({ key = "L", mods = "CTRL" }),
-		-- }),
+		action = wezterm.action.Multiple({
+			act.ClearScrollback("ScrollbackAndViewport"),
+			act.SendKey({ key = "L", mods = "CTRL" }),
+		}),
+	},
+	{
+		key = "w",
+		mods = "CMD",
+		action = act.CloseCurrentTab({ confirm = true }),
 	},
 	-- Move cursor word by word (without selecting)
 	{ key = "LeftArrow", mods = "OPT", action = act.SendKey({ key = "b", mods = "ALT" }) },

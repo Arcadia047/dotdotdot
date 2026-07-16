@@ -1,0 +1,19 @@
+{
+  "HTML5 document": {
+    "prefix": "html5",
+    "description": "Minimal HTML5 document",
+    "body": [
+      "<!doctype html>",
+      "<html lang=\"${1:en}\">",
+      "<head>",
+      "  <meta charset=\"UTF-8\">",
+      "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">",
+      "  <title>${2:Document}</title>",
+      "</head>",
+      "<body>",
+      "  ${0}",
+      "</body>",
+      "</html>"
+    ]
+  }
+}

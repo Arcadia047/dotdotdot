@@ -1,0 +1,8 @@
+{
+  "name": "dotdotdot-curated-snippets",
+  "contributes": {
+    "snippets": [
+      { "language": "html", "path": "./html.json" }
+    ]
+  }
+}

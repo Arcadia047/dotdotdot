@@ -1,19 +1,39 @@
+local theme_mode = vim.env.DOTFILES_THEME == "light" and "light" or "dark"
+local flavors = {
+	dark = "macchiato",
+	light = "latte",
+}
+
 return {
 	{
-		"folke/tokyonight.nvim",
+		"catppuccin/nvim",
+		name = "catppuccin",
 		lazy = false,
 		priority = 1000,
 		opts = {
-			style = "night",
-			transparent = false,
-			styles = {
-				sidebars = "transparent",
-				floats = "transparent",
+			flavour = flavors[theme_mode],
+			background = {
+				light = "latte",
+				dark = "macchiato",
+			},
+			transparent_background = false,
+			integrations = {
+				blink_cmp = { style = "bordered" },
+				gitsigns = true,
+				lsp_trouble = true,
+				mason = true,
+				neotree = true,
+				overseer = true,
+				render_markdown = true,
+				telescope = { enabled = true },
+				vim_dadbod_ui = true,
+				which_key = true,
 			},
 		},
-	},
-	{
-		"LazyVim/LazyVim",
-		opts = { colorscheme = "tokyonight" },
+		config = function(_, opts)
+			vim.o.background = theme_mode
+			require("catppuccin").setup(opts)
+			vim.cmd.colorscheme("catppuccin-" .. flavors[theme_mode])
+		end,
 	},
 }

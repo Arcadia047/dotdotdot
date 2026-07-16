@@ -1,33 +1,63 @@
 return {
 	{
 		"saghen/blink.cmp",
+		version = "1.*",
+		lazy = false,
 		opts = {
+			sources = {
+				default = { "lsp", "path", "snippets", "buffer" },
+				per_filetype = {
+					sql = { inherit_defaults = true, "dadbod" },
+				},
+				providers = {
+					lsp = { fallbacks = {} },
+					buffer = { max_items = 10, min_keyword_length = 3 },
+					snippets = {
+						max_items = 8,
+						score_offset = -3,
+						opts = {
+							friendly_snippets = false,
+							search_paths = { vim.fn.stdpath("config") .. "/snippets" },
+						},
+					},
+					dadbod = {
+						name = "Database",
+						module = "vim_dadbod_completion.blink",
+					},
+				},
+			},
+			fuzzy = {
+				implementation = "prefer_rust",
+			},
 			completion = {
 				list = {
-					-- DISABLE auto-selection. You must select manually.
 					selection = { preselect = false, auto_insert = false },
 				},
-				-- Remove "ghost text" (gray preview text inline)
 				ghost_text = { enabled = false },
 				documentation = { auto_show = true, auto_show_delay_ms = 200 },
+				menu = {
+					draw = {
+						columns = {
+							{ "kind_icon" },
+							{ "label", "label_description", gap = 1 },
+							{ "source_name" },
+						},
+					},
+				},
 			},
+			signature = { enabled = true },
 			keymap = {
 				preset = "default",
-				-- TAB: Select Next Item (Cycle Down)
-				["<Tab>"] = { "select_next", "fallback" },
-				-- SHIFT+TAB: Select Previous Item (Cycle Up)
-				["<S-Tab>"] = { "select_prev", "fallback" },
-				-- Only accept on Enter.
+				["<Tab>"] = { "select_next", "snippet_forward", "fallback" },
+				["<S-Tab>"] = { "select_prev", "snippet_backward", "fallback" },
 				["<CR>"] = { "accept", "fallback" },
+				["<C-e>"] = { "hide", "fallback" },
 			},
 		},
 	},
-
-	-- We keep this for HTML templates, but completion won't auto-expand them.
 	{
-		"L3MON4D3/LuaSnip",
-		keys = function()
-			return {}
-		end, -- Disable default heavy keybinds
+		"echasnovski/mini.pairs",
+		event = "VeryLazy",
+		opts = {},
 	},
 }
