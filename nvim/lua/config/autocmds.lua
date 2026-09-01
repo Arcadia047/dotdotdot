@@ -1,5 +1,36 @@
 local group = vim.api.nvim_create_augroup("UserConfig", { clear = true })
 
+-- Keep the cursor inside the middle ~30% band of the window while moving
+-- with j/k: scrolling starts once the cursor comes within 30% of the top
+-- or bottom edge. Recomputed per window so splits scale independently.
+local function rescale_scrolloff(args)
+	if args.event ~= "VimResized" then
+		local height = vim.api.nvim_win_get_height(0)
+		if height > 0 then
+			vim.wo.scrolloff = math.floor(height * 0.3)
+		end
+		return
+	end
+	-- On VimResized, rescale every window after the resize-equalize autocmd
+	-- has run, since pre-resize heights are stale during the event itself.
+	vim.schedule(function()
+		for _, win in ipairs(vim.api.nvim_list_wins()) do
+			if vim.api.nvim_win_is_valid(win) then
+				local height = vim.api.nvim_win_get_height(win)
+				if height > 0 then
+					vim.wo[win].scrolloff = math.floor(height * 0.3)
+				end
+			end
+		end
+	end)
+end
+
+vim.api.nvim_create_autocmd({ "WinNew", "WinEnter", "VimResized", "BufWinEnter" }, {
+	group = group,
+	desc = "Keep cursor near the center of each window",
+	callback = rescale_scrolloff,
+})
+
 vim.api.nvim_create_autocmd("TextYankPost", {
 	group = group,
 	desc = "Highlight yanked text",

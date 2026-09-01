@@ -152,6 +152,9 @@ return {
 			local wk = require("which-key")
 			wk.setup(opts)
 			wk.add({
+				{ "<leader>D", group = "Debug" },
+				{ "<leader>Dg", group = "Debug Go" },
+				{ "<leader>Dp", group = "Debug Python" },
 				{ "<leader>b", group = "Buffers" },
 				{ "<leader>c", group = "Code" },
 				{ "<leader>d", group = "Database" },

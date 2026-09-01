@@ -1,3 +1,5 @@
+local java = require("config.java")
+
 local servers = {
 	pyright = {
 		settings = {
@@ -105,6 +107,8 @@ local servers = {
 	},
 	taplo = {},
 	marksman = { filetypes = { "markdown" } },
+	terraformls = {},
+	kotlin_lsp = {},
 	clangd = {
 		filetypes = { "c", "cpp", "objc", "objcpp", "cuda", "proto" },
 		cmd = {
@@ -122,9 +126,13 @@ local servers = {
 local mason_tools = {
 	"bash-language-server",
 	"biome",
+	"codelldb",
 	"clang-format",
 	"clangd",
 	"css-lsp",
+	"debugpy",
+	"detekt",
+	"delve",
 	"emmet-language-server",
 	"eslint-lsp",
 	"gofumpt",
@@ -133,7 +141,12 @@ local mason_tools = {
 	"gopls",
 	"html-lsp",
 	"jdtls",
+	"java-debug-adapter",
+	"js-debug-adapter",
 	"json-lsp",
+	"kotlin-debug-adapter",
+	"kotlin-lsp",
+	"ktlint",
 	"marksman",
 	"prettier",
 	"pyright",
@@ -143,6 +156,8 @@ local mason_tools = {
 	"stylua",
 	"tailwindcss-language-server",
 	"taplo",
+	"terraform-ls",
+	"tflint",
 	"tree-sitter-cli",
 	"vtsls",
 	"yaml-language-server",
@@ -187,6 +202,7 @@ local function lsp_attach(args)
 	map("n", "<leader>cS", function()
 		require("telescope.builtin").lsp_dynamic_workspace_symbols()
 	end, "Workspace Symbols")
+	map("n", "<leader>cl", vim.lsp.codelens.run, "Run Code Lens")
 
 	if client and client.name == "clangd" then
 		map("n", "<leader>cH", "<cmd>LspClangdSwitchSourceHeader<cr>", "Switch Source/Header")
@@ -228,7 +244,7 @@ return {
 	{
 		"neovim/nvim-lspconfig",
 		lazy = false,
-		dependencies = { "saghen/blink.cmp" },
+		dependencies = { "saghen/blink.cmp", "b0o/schemastore.nvim" },
 		config = function()
 			local severity = vim.diagnostic.severity
 			vim.diagnostic.config({
@@ -255,6 +271,13 @@ return {
 				float = { border = "rounded", source = "if_many" },
 			})
 
+			local schemastore = require("schemastore")
+			servers.jsonls.settings = {
+				json = { schemas = schemastore.json.schemas(), validate = { enable = true } },
+			}
+			servers.yamlls.settings.yaml.schemaStore = { enable = false, url = "" }
+			servers.yamlls.settings.yaml.schemas = schemastore.yaml.schemas()
+
 			vim.lsp.config("*", { capabilities = require("blink.cmp").get_lsp_capabilities() })
 			for name, config in pairs(servers) do
 				vim.lsp.config(name, config)
@@ -270,7 +293,7 @@ return {
 	{
 		"mfussenegger/nvim-jdtls",
 		ft = { "java" },
-		dependencies = { "saghen/blink.cmp" },
+		dependencies = { "saghen/blink.cmp", "mfussenegger/nvim-dap" },
 		config = function()
 			local group = vim.api.nvim_create_augroup("UserJdtls", { clear = true })
 			local function start(args)
@@ -297,6 +320,11 @@ return {
 				end
 
 				local mason = vim.fn.stdpath("data") .. "/mason"
+				local bundles = {}
+				local java_debug = mason .. "/share/java-debug-adapter/com.microsoft.java.debug.plugin.jar"
+				if vim.fn.filereadable(java_debug) == 1 then
+					table.insert(bundles, java_debug)
+				end
 
 				local config = {
 					cmd = {
@@ -304,24 +332,14 @@ return {
 						"-data",
 						vim.fn.stdpath("cache") .. "/jdtls-workspaces/" .. vim.fn.sha256(root):sub(1, 16),
 					},
-					cmd_env = { JAVA_HOME = "/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" },
+					cmd_env = { JAVA_HOME = java.home("21") },
 					root_dir = root,
 					capabilities = require("blink.cmp").get_lsp_capabilities(),
+					init_options = { bundles = bundles },
+					dap = { hotcodereplace = "auto" },
 					settings = {
 						java = {
-							configuration = {
-								runtimes = {
-									{
-										name = "JavaSE-17",
-										path = "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home",
-										default = true,
-									},
-									{
-										name = "JavaSE-21",
-										path = "/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home",
-									},
-								},
-							},
+							configuration = { runtimes = java.runtimes() },
 							completion = {
 								favoriteStaticMembers = {
 									"org.junit.jupiter.api.Assertions.*",
@@ -365,7 +383,7 @@ return {
 	{
 		"scalameta/nvim-metals",
 		ft = { "scala", "sbt", "java" },
-		dependencies = { "nvim-lua/plenary.nvim", "saghen/blink.cmp" },
+		dependencies = { "nvim-lua/plenary.nvim", "saghen/blink.cmp", "mfussenegger/nvim-dap" },
 		config = function()
 			local function start(args)
 				local root = vim.fs.root(args.buf, { "build.sbt", "build.sc", ".scala-build" })
@@ -380,11 +398,37 @@ return {
 				config.root_dir = root
 				config.capabilities = require("blink.cmp").get_lsp_capabilities()
 				config.settings = {
-					serverVersion = "1.6.7",
+					serverVersion = "1.6.8",
 					showImplicitArguments = true,
 					showImplicitConversionsAndClasses = true,
 					showInferredType = true,
 				}
+				config.on_attach = function()
+					require("metals").setup_dap()
+					local dap = require("dap")
+					dap.configurations.scala = dap.configurations.scala
+						or {
+							{
+								type = "scala",
+								request = "launch",
+								name = "Run or test current Scala file",
+								metals = { runType = "runOrTestFile" },
+							},
+							{
+								type = "scala",
+								request = "launch",
+								name = "Test current Scala target",
+								metals = { runType = "testTarget" },
+							},
+							{
+								type = "scala",
+								request = "attach",
+								name = "Attach to Scala/JVM on 5005",
+								hostName = "localhost",
+								port = 5005,
+							},
+						}
+				end
 				require("metals").initialize_or_attach(config)
 			end
 

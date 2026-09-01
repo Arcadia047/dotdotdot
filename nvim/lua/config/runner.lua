@@ -19,6 +19,21 @@ local function contains(path, pattern)
 	return table.concat(lines, "\n"):find(pattern) ~= nil
 end
 
+local function kotlin_class_name(file, append_file_suffix)
+	local package_name
+	for _, line in ipairs(vim.fn.readfile(file, "", 200)) do
+		package_name = line:match("^%s*package%s+([%w_.]+)")
+		if package_name then
+			break
+		end
+	end
+	local class_name = vim.fs.basename(file):gsub("%.kts$", ""):gsub("%.kt$", "")
+	if append_file_suffix then
+		class_name = class_name .. "Kt"
+	end
+	return package_name and (package_name .. "." .. class_name) or class_name
+end
+
 local function shell_task(command)
 	return { cmd = "/bin/zsh", args = { "-lc", command } }
 end
@@ -34,7 +49,12 @@ local function package_task(root, file)
 	end
 
 	local script
-	if file:match("[%.%-_]test%.[jt]sx?$") or file:match("[%.%-_]spec%.[jt]sx?$") then
+	if
+		file:match("[%.%-_]test%.[jt]s$")
+		or file:match("[%.%-_]test%.[jt]sx$")
+		or file:match("[%.%-_]spec%.[jt]s$")
+		or file:match("[%.%-_]spec%.[jt]sx$")
+	then
 		script = package.scripts.test and "test"
 	end
 	for _, candidate in ipairs({ "dev", "start" }) do
@@ -68,6 +88,8 @@ local function task_for_buffer(bufnr)
 		"pom.xml",
 		"build.gradle",
 		"build.gradle.kts",
+		"settings.gradle",
+		"settings.gradle.kts",
 		"build.sbt",
 		"pyproject.toml",
 	}) or dir
@@ -183,6 +205,82 @@ local function task_for_buffer(bufnr)
 			return { name = "Run " .. vim.fs.basename(file), cmd = "scala-cli", args = { "run", file }, cwd = project }
 		end
 		return { name = "Run " .. vim.fs.basename(file), cmd = "scala", args = { file }, cwd = project }
+	end
+
+	if ft == "kotlin" then
+		local kotlin_root = find_root(bufnr, {
+			"settings.gradle",
+			"settings.gradle.kts",
+			"build.gradle",
+			"build.gradle.kts",
+			"pom.xml",
+		})
+		local is_test = file:match("Test%.kt$") or file:match("Tests%.kt$")
+		if kotlin_root then
+			local pom = kotlin_root .. "/pom.xml"
+			local gradle = vim.fn.filereadable(kotlin_root .. "/build.gradle.kts") == 1
+					and kotlin_root .. "/build.gradle.kts"
+				or kotlin_root .. "/build.gradle"
+			if is_test and vim.fn.filereadable(pom) == 1 then
+				local mvn = executable(kotlin_root .. "/mvnw", "mvn")
+				return {
+					name = "Test " .. kotlin_class_name(file, false),
+					cmd = mvn,
+					args = { "-Dtest=" .. kotlin_class_name(file, false), "test" },
+					cwd = kotlin_root,
+				}
+			end
+			if is_test and vim.fn.filereadable(gradle) == 1 then
+				local gradlew = executable(kotlin_root .. "/gradlew", "gradle")
+				return {
+					name = "Test " .. kotlin_class_name(file, false),
+					cmd = gradlew,
+					args = { "test", "--tests", kotlin_class_name(file, false) },
+					cwd = kotlin_root,
+				}
+			end
+			if contains(pom, "spring%-boot") then
+				local mvn = executable(kotlin_root .. "/mvnw", "mvn")
+				return { name = "Run Spring Boot", cmd = mvn, args = { "spring-boot:run" }, cwd = kotlin_root }
+			end
+			if contains(gradle, "spring%-boot") or contains(gradle, "org%.springframework%.boot") then
+				local gradlew = executable(kotlin_root .. "/gradlew", "gradle")
+				return { name = "Run Spring Boot", cmd = gradlew, args = { "bootRun" }, cwd = kotlin_root }
+			end
+			if vim.fn.filereadable(gradle) == 1 then
+				local gradlew = executable(kotlin_root .. "/gradlew", "gradle")
+				return { name = "Run Kotlin project", cmd = gradlew, args = { "run" }, cwd = kotlin_root }
+			end
+			if vim.fn.filereadable(pom) == 1 then
+				local mvn = executable(kotlin_root .. "/mvnw", "mvn")
+				return {
+					name = "Run " .. kotlin_class_name(file, true),
+					cmd = mvn,
+					args = { "compile", "exec:java", "-Dexec.mainClass=" .. kotlin_class_name(file, true) },
+					cwd = kotlin_root,
+				}
+			end
+		end
+		if file:match("%.kts$") then
+			return { name = "Run " .. vim.fs.basename(file), cmd = "kotlinc", args = { "-script", file }, cwd = dir }
+		end
+		local output = vim.fn.stdpath("cache") .. "/run-" .. vim.fn.sha256(file):sub(1, 16) .. ".jar"
+		local command = table.concat({
+			"kotlinc",
+			vim.fn.shellescape(file),
+			"-include-runtime -d",
+			vim.fn.shellescape(output),
+			"&& java -jar",
+			vim.fn.shellescape(output),
+		}, " ")
+		local task = shell_task(command)
+		task.name = "Build and run " .. vim.fs.basename(file)
+		task.cwd = dir
+		return task
+	end
+
+	if ft == "terraform" or ft == "terraform-vars" then
+		return { name = "Validate Terraform module", cmd = "terraform", args = { "validate" }, cwd = dir }
 	end
 
 	if ft == "sh" or ft == "bash" or ft == "zsh" then

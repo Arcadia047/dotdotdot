@@ -1,7 +1,7 @@
 # Development Environment Plan
 
 Status: implemented and acceptance-tested
-Last updated: 2026-07-15
+Last updated: 2026-08-04
 
 ## North star
 
@@ -23,7 +23,7 @@ Prefer mature native functionality and language-server capabilities over overlap
 
 ## Fixed decisions
 
-- Target macOS only for now.
+- Target Apple Silicon macOS only for now.
 - Keep history, configuration, and credentials local.
 - Do not add AI completion or AI-generated shell commands.
 - Use the current custom Neovim migration as the implementation base; do not reset the worktree to `main`.
@@ -42,30 +42,32 @@ Prefer mature native functionality and language-server capabilities over overlap
 - Run only tool-declared safe fixes automatically. Semantic or unsafe fixes require review.
 - Support per-project Node versions with a faster replacement for NVM.
 - Remove Conda initialization.
-- Use Java 17 for projects and a separate Java 21 runtime for jdtls.
+- Keep the Zsh experience explicit and Homebrew-managed instead of adding a turnkey shell framework with overlapping features and a separate update path.
+- Use a machine-local Java project default (17 when unspecified) and a separate Java 21 runtime for jdtls.
 - Optimize Scala support for learning and small exercises, not enterprise Scala projects.
 - Support SQLite and PostgreSQL; never commit database credentials.
-- Defer debugger UI until a real workflow demonstrates that tasks, tests, stack traces, and logs are insufficient.
+- Use one shared debugger workflow for executable languages with mature adapters; keep project launch details in `.vscode/launch.json` when global discovery is insufficient.
 
 ## Implemented system
 
 This document is the canonical scope and maintenance reference. Future changes should preserve the north star and pass the change-control rule at the end of the document.
 
-- Neovim is a curated, hand-owned IDE rather than a distribution. The configuration is split into core, editor, language, formatting, Treesitter, workflow, and theme modules.
+- Neovim is a curated, hand-owned IDE rather than a distribution. The configuration is split into core, editor, language, formatting, debugging, Treesitter, workflow, and theme modules.
 - Telescope, Neo-tree, Bufferline, persistence, Which-key, Gitsigns, Trouble, and native tmux navigation provide one workspace model without overlapping alternatives.
 - Blink supplies explicit LSP/path/buffer/curated-snippet completion. Nothing is preselected, ghost text is off, and Enter only accepts a selected item.
 - Native Neovim diagnostics, LSP actions, action previews, workspace rename, inlay hints, and Java refactors provide the code intelligence layer.
 - Hardtime runs in non-blocking coaching mode: it suggests more efficient Vim motions during normal work and records locally aggregated hints for an on-demand habit report.
-- Python, Go, JavaScript/TypeScript/web, C/C++, Java, Scala, SQL, Markdown, shell, Lua, JSON, YAML, TOML, and XML have syntax and/or language tooling appropriate to their role.
-- Conform enforces a strict configured-project boundary. Python uses Ruff safe fixes/imports/formatting; configured ESLint projects apply ESLint-declared fixes before formatting; Go uses goimports/gofumpt; Biome/Prettier, clang-format, Google Java Format, SQLFluff, StyLua, and shfmt run only when their relevant project declaration is present. Loose files format only on explicit request.
+- Python, Go, JavaScript/TypeScript/web, C/C++, Java, Scala, Kotlin, Terraform/HCL, SQL, Markdown, shell, Lua, JSON, YAML, TOML, and XML have syntax and/or language tooling appropriate to their role.
+- Conform enforces a strict configured-project boundary. Python uses Ruff safe fixes/imports/formatting; configured ESLint projects apply ESLint-declared fixes before formatting; Go uses goimports/gofumpt; Biome/Prettier, clang-format, Google Java Format, ktlint, SQLFluff, StyLua, Taplo, and shfmt run only when their relevant project declaration is present. Terraform uses its canonical formatter without needing a style file. Loose files format only on explicit request.
+- nvim-dap and nvim-dap-view supply one key vocabulary and a temporary bottom-oriented debug view for Python/debugpy, Go/Delve, JavaScript and TypeScript/vscode-js-debug, C/C++/CodeLLDB, Java/jdtls, Scala/Metals, and provisional Kotlin/JVM debugging. Mason owns external adapters; project `.vscode/launch.json` remains the escape hatch for framework-specific launch details.
 - Overseer owns one project-aware run interface. It prefers project scripts/build tools and falls back to safe current-file execution where practical. Output is available in the bottom task panel and parsable failures feed quickfix/diagnostics.
 - Dadbod supports SQLite/PostgreSQL without committed connection strings. Render Markdown supplies inline editor rendering without rebuilding a notebook stack.
 - Zsh uses one cached native completion initialization, fzf-tab, local autosuggestions, syntax highlighting, prefix history search, fzf history/files/directories, zoxide, direnv, and fnm.
 - WezTerm, tmux, and Neovim share one Catppuccin mode: Macchiato is the default dark palette and Latte is the prepared light palette.
-- Homebrew Python is the system Python, Java 17 is the project default, Java 21 is private to jdtls, fnm owns per-project Node, and Coursier/Scala CLI/Metals own Scala learning workflows.
-- The Brewfile and bootstrap script provision the supported macOS system and back up conflicting links before changing them.
+- Homebrew Python is the system Python, each Mac selects Java 17 or 21 through a local profile, Java 21 is private to jdtls, fnm owns per-project Node, Coursier/Scala CLI/Metals own Scala learning workflows, and Homebrew provides Kotlin and Terraform CLIs for shell and task use.
+- The Brewfile and bootstrap script provision Homebrew, the supported CLI tools, WezTerm, AeroSpace, fonts, runtimes, editor plugins, and pinned tmux plugins while backing up conflicting links before changing them.
 
-Intentional boundaries remain: rich Jupyter notebooks stay in VS Code; tmux owns persistent terminals; debugger UI, Neotest, `refactoring.nvim`, AI completion, and general snippet packs remain deferred.
+Intentional boundaries remain: rich Jupyter notebooks stay in VS Code; tmux owns persistent terminals; Neotest, `refactoring.nvim`, AI completion, and general snippet packs remain deferred. Bash, Terraform, SQL, and data/markup formats intentionally have no DAP because validation and task output fit those workflows better than stepping.
 
 ## Desired daily workflow
 
@@ -173,6 +175,8 @@ Expected semantic capabilities include:
 - Scala/Metals: Scala-specific quick fixes, imports, missing members, build integration
 - C/C++/clangd: include fixes, clang-tidy actions, rename
 - Web/Biome or project ESLint: safe correctness, accessibility, complexity, and suspicious-code fixes
+- Kotlin/official Kotlin LSP, ktlint, and configured Detekt: compiler feedback, quick fixes, imports, style, and deeper project-declared analysis
+- Terraform/terraform-ls and TFLint: validation, references, provider-aware diagnostics, and safe server actions
 
 ### Formatting and linting policy
 
@@ -186,6 +190,9 @@ Project configuration wins. Do not force a personal formatter over a repository 
 - Scala: Metals/scalafmt
 - SQL: dialect-aware explicit formatting/fixing initially; avoid surprise rewrites
 - Markdown: project formatter/linter when declared
+- Kotlin: ktlint; Detekt diagnostics only when the repository supplies a Detekt configuration
+- Terraform: canonical `terraform fmt`; TFLint diagnostics after save
+- TOML: Taplo when configured
 
 ### Language modules
 
@@ -198,6 +205,8 @@ Support:
 - C and C++
 - Java 17 and Spring Boot
 - Scala learning projects
+- Kotlin/JVM Gradle and Maven projects plus standalone scripts
+- Terraform modules and variable files
 - SQL for SQLite and PostgreSQL
 - Markdown
 - JSON and common configuration formats
@@ -229,6 +238,18 @@ Markdown policy:
 - Provide in-Neovim rendering for headings, lists, tables, code blocks, links, and LaTeX where practical.
 - Do not rebuild the removed notebook stack indirectly through Markdown plugins.
 
+Kotlin policy:
+
+- Use JetBrains' official `kotlin-lsp`; it is the best maintained option but remains Alpha, so keep the configuration isolated and easy to replace.
+- Use ktlint as the default style formatter/linter and run Detekt only when the repository supplies its configuration.
+- Prefer Gradle/Maven wrappers for projects. Use the Homebrew Kotlin CLI only for standalone files and scripts.
+
+Terraform policy:
+
+- Use HashiCorp `terraform-ls`, the official Terraform CLI, `terraform fmt`, and TFLint.
+- Treat `validate`, `plan`, tests, and `TF_LOG` as the debugging workflow; never add a Terraform DAP adapter.
+- Do not run `terraform init`, `plan`, or `apply` automatically from an editor save hook.
+
 ### Tasks and code execution
 
 Use one project-aware task interface rather than unrelated per-language runner keymaps.
@@ -251,6 +272,8 @@ Expected defaults:
 - Java: current main/test class or Maven/Gradle/Spring task
 - Scala: Scala CLI or project task
 - SQL: current statement/selection through the configured database connection
+- Kotlin: Gradle/Maven project task first; Kotlin CLI for standalone files and scripts
+- Terraform: validate the current module; initialization, plan, and apply remain explicit project tasks
 
 Compiler, linter, and test output should feed quickfix/diagnostics when parsable.
 
@@ -267,7 +290,12 @@ Compiler, linter, and test output should feed quickfix/diagnostics when parsable
 - Neovim tasks own normal build/run/test commands.
 - Native `:terminal` is sufficient for temporary terminal TUIs such as LazyGit.
 - Do not add ToggleTerm or another terminal manager initially.
-- Defer DAP and debugger UI. Add it language-by-language only after a concrete debugging need is demonstrated.
+- Use nvim-dap with a UI that opens for active sessions and closes when they end.
+- Debug Python, Go, JavaScript/TypeScript, C/C++, Java, Scala, and Kotlin through their established adapters; Kotlin support is provisional and requires a compiled Gradle/Maven project.
+- Gradle projects must carry their own `gradlew`; Maven projects can use `mvnw` or the provisioned Maven. Build Kotlin projects before debugging them.
+- Run Java tests through the project task workflow for now. The current released Java Test extension requires an ASM version excluded by current JDTLS 1.60, so its test-debug bundle is deliberately not loaded; Java main-class debugging remains enabled.
+- Reuse `.vscode/launch.json` for per-project arguments, environments, remote targets, and framework-specific launch behavior.
+- Keep Bash, Terraform, SQL, and data/markup formats on lint/validate/task workflows instead of adding low-value adapters.
 
 ### Explicitly deferred or excluded
 
@@ -276,7 +304,6 @@ Compiler, linter, and test output should feed quickfix/diagnostics when parsable
 - Molten, Quarto, Jupytext, and terminal image rendering
 - A Neovim distribution such as LazyVim
 - A general terminal-management plugin
-- DAP/debugger UI in the initial implementation
 - Neotest until task-based test execution proves insufficient
 - `refactoring.nvim` until LSP refactoring gaps are demonstrated
 - Multiple overlapping file trees, fuzzy finders, Git UIs, completion engines, or formatters
@@ -286,8 +313,9 @@ Compiler, linter, and test output should feed quickfix/diagnostics when parsable
 ### Configuration ownership
 
 - Move zsh configuration into this repository and manage it through the bootstrap process.
-- Separate login environment, interactive behavior, completion, aliases/functions, and local machine overrides.
-- Provide a local ignored file for machine-only or sensitive values.
+- Keep environment resolution in one shared module sourced by both login and interactive shells.
+- Keep the machine-profile interface declarative: Java default plus optional PATH prepend/append arrays.
+- Keep machine preferences in `~/.config/dotdotdot/machine.zsh` and secrets or one-off interactive customizations in `~/.config/zsh/local.zsh`.
 - Keep startup idempotent: nested shells must not duplicate PATH or `fpath` entries.
 
 ### Completion and interaction stack
@@ -317,7 +345,7 @@ Compiler, linter, and test output should feed quickfix/diagnostics when parsable
 - Remove Conda initialization.
 - Keep Homebrew Python as the default Python.
 - Use virtual environments for Python projects.
-- Make Java 17 the normal project environment while allowing jdtls to launch with Java 21 explicitly.
+- Default to Java 17, allow each Mac to select Java 21 locally, and keep jdtls on Java 21 independently.
 - Retain Go.
 - Retain Coursier and use Scala CLI/Metals for Scala learning.
 - Keep Bun only if an actual Bun project requires it.
@@ -383,6 +411,21 @@ Compiler, linter, and test output should feed quickfix/diagnostics when parsable
 - Document the small habitual key set and maintenance/update procedure.
 - Review every dependency against the north star and remove unjustified overlap.
 
+### Phase 6: cross-Mac portability (complete)
+
+- Centralize Homebrew, PATH, and Java resolution behind the machine-profile interface.
+- Make both login shells and tmux child shells resolve the receiving Mac's preferences.
+- Teach Neovim to consume the resolved Java default without changing its shared editor logic.
+- Provision Homebrew, WezTerm, AeroSpace, tmux, Neovim, the shared prompt, fonts, CLI tools, runtimes, language tools, and optional machine-only packages from bootstrap.
+- Add dry-run and read-only doctor paths, then test fresh-home and Java 17/21 adapters.
+
+### Phase 7: Terraform, Kotlin, and debugging (complete)
+
+- Add official Terraform and Kotlin language servers, parsers, formatting, linting, and current-context tasks.
+- Add SchemaStore catalogs for JSON/YAML and update Metals to the current stable release.
+- Add one discoverable DAP workflow for mature executable-language adapters, with Kotlin marked provisional.
+- Provision the added CLIs, Mason tools, adapters, plugins, and parsers from bootstrap.
+
 ## Daily muscle memory
 
 Press `<Space>` and pause whenever a mapping is forgotten; Which-key shows the available groups. `<leader>fk` searches every keymap by description, which is the primary discoverability escape hatch.
@@ -401,6 +444,7 @@ Press `<Space>` and pause whenever a mapping is forgotten; Which-key shows the a
 - `gd`, `gr`, `K`, and `gK` show definition, references, documentation, and signature help.
 - `<leader>ca` previews contextual actions; `<leader>cA` requests tool-declared safe fixes; `<leader>co` organizes imports.
 - `<leader>cr` renames across the workspace; `<leader>cf` explicitly formats any file.
+- `<leader>cl` runs a language-server code lens, including Scala and Java run/debug lenses when offered.
 - `[d` and `]d` move through diagnostics; `<leader>cd` explains the current line; `<leader>xx` opens workspace diagnostics and `<leader>xX` limits them to the buffer.
 - In completion, `Tab`/`Shift-Tab` choose an item, Enter accepts it, and `Ctrl-e` closes the menu. Enter falls through normally when nothing is selected.
 - In Java, `<leader>cjo` organizes imports and `<leader>cjv`/`<leader>cjm` extract a variable/method. Language-server actions remain available through `<leader>ca` in every supported language.
@@ -411,6 +455,14 @@ Press `<Space>` and pause whenever a mapping is forgotten; Which-key shows the a
 - `<leader>gg` opens LazyGit in a temporary Neovim terminal tab. `[h`/`]h` move through changed hunks and `<leader>h...` exposes focused hunk operations.
 - In SQL, `<leader>db` opens the database UI, `<leader>de` runs the blank-line-delimited current statement or visual selection, and `<leader>dE` runs the buffer.
 - Markdown rendering starts automatically; use `:RenderMarkdown toggle` when literal source is preferable.
+
+### Debug
+
+- `<leader>Dt` toggles a breakpoint; `<leader>Dc` starts or continues the current language's debugger.
+- `<leader>Do`, `<leader>Di`, and `<leader>DO` step over, into, and out. `<leader>DP` pauses and `<leader>Dq` terminates.
+- `<leader>Du` toggles the debug panels; `<leader>De` evaluates the expression under the cursor or visual selection; `<leader>Dr` toggles the REPL.
+- `<leader>Dpn`/`<leader>Dpc` debug the nearest Python test or class, and `<leader>Dgt` debugs the nearest Go test. Use `<leader>rr` for Java tests until the upstream Java Test/JDTLS bundle versions converge.
+- `:DapLoadLaunchJSON` loads a project's `.vscode/launch.json` when the default current-file/package discovery is not enough.
 
 ### Shell
 
@@ -428,17 +480,28 @@ Press `<Space>` and pause whenever a mapping is forgotten; Which-key shows the a
 From this repository:
 
 ```sh
-./bootstrap.sh --dry-run
+./bootstrap.sh --dry-run --install
 ./bootstrap.sh --install
+./bootstrap.sh --check
 ```
 
-The first command shows submodule, link, and backup actions. The second initializes the pinned tmux plugins, installs the Brewfile, default Node, Scala CLI/Metals, Neovim plugins, Mason tools, and configured Treesitter parsers. Existing conflicting paths move to `~/.dotfiles-backups/<timestamp>/` before linking. The initial migration backup is `~/.dotfiles-backups/20260713-233912/`.
+On a fresh Apple Silicon Mac, bootstrap requests Apple's Command Line Tools if necessary, installs Homebrew from its official installer, installs the shared Brewfile (including WezTerm, AeroSpace, Maple Mono, tmux, Neovim, zsh tools, Kotlin, Terraform, runtimes, and build tools), initializes pinned tmux plugins, links the configs, installs default Node and Scala CLI/Metals, restores Neovim plugins (including lazy.nvim itself) to the committed lockfile, and installs Mason tools, debug adapters, and configured Treesitter parsers. Existing conflicting paths move to `~/.dotfiles-backups/<timestamp>/` before linking. The final command reports missing dependencies, incorrect links, Java selection, and submodule drift without changing the machine.
+
+The shared default is Java 17. Before installation, a Mac that should default to Java 21 can create its local profile:
+
+```sh
+mkdir -p ~/.config/dotdotdot
+cp zsh/machine.example.zsh ~/.config/dotdotdot/machine.zsh
+/usr/bin/vi ~/.config/dotdotdot/machine.zsh
+```
+
+The profile and optional `~/.config/dotdotdot/Brewfile.local` are never linked or overwritten by bootstrap.
 
 ### Deliberate updates
 
 Do not update tools automatically during ordinary editor startup. Use this sequence when there is time to verify the result:
 
-1. Run `brew update`, then `brew bundle check --file Brewfile`; use `brew upgrade <name>` only for tools intentionally being upgraded.
+1. Run `brew update`, then `brew bundle check --no-upgrade --file Brewfile`; use `brew upgrade <name>` only for tools intentionally being upgraded.
 2. In Neovim, run `:Lazy check`, review the candidates, then `:Lazy update`. Review the `nvim/lazy-lock.json` diff.
 3. Run `:MasonToolsUpdate` and `:TSUpdateConfigured` only when language tools/parsers should move.
 4. Restart Neovim, run `:checkhealth`, open a representative project, confirm completion/diagnostics, and run `<leader>rr`.
@@ -448,7 +511,9 @@ For a new Node release, use `fnm install <version>` and choose a per-project ver
 
 ### Machine-local configuration and secrets
 
-- Put shell-only environment variables and secrets in `~/.config/zsh/local.zsh`. It is sourced after fnm/direnv/zoxide and is outside this repository.
+- Put per-Mac Java and PATH preferences in `~/.config/dotdotdot/machine.zsh`, using `zsh/machine.example.zsh` as the interface reference. It is sourced early and remains outside this repository.
+- Put secrets, aliases, and other one-off interactive shell behavior in `~/.config/zsh/local.zsh`. It is sourced after fnm/direnv/zoxide and remains outside this repository.
+- Put optional per-Mac Homebrew declarations in `~/.config/dotdotdot/Brewfile.local`; the tracked Brewfile remains the common baseline.
 - Set `DATABASE_URL` or `SQLITE_DATABASE` locally for a default database.
 - For named Dadbod connections, create `~/.config/nvim-local/db.lua` and assign `vim.g.dbs`; never place passwords or connection strings in this repository.
 - Hardtime keeps its local-only habit history at `~/.local/state/nvim/hardtime.nvim.log`. Removing that file resets the report.
@@ -476,6 +541,23 @@ Verified on macOS arm64 on 2026-07-14:
 - Project sessions restored two buffers and their split layout. An isolated tmux server loaded all four cross-pane navigation bindings.
 - Seven warm Neovim starts had a 70 ms median; seven zsh starts had a 130 ms median, comfortably below the 500 ms requirement.
 
+Cross-Mac portability was reverified on macOS arm64 on 2026-08-04:
+
+- The full `./bootstrap.sh --install` path completed twice, with the second run confirming idempotent links, dependencies, runtimes, language tools, and doctor results.
+- A clean-home dry run exercised the new-Mac Homebrew, dependency, submodule, link, runtime, and editor provisioning sequence without changing that home.
+- A clean Neovim data directory restored every plugin from `lazy-lock.json`, including lazy.nvim's own pinned revision, without changing the lockfile.
+- Default Java 17 and a machine-local Java 21 profile both produced an idempotent PATH, the matching `JAVA_HOME`, and the matching Neovim project runtime.
+- Live Neovim started cleanly with `catppuccin-macchiato`; syntax, ShellCheck, shfmt, StyLua, JSON, and Git whitespace checks passed.
+
+Terraform, Kotlin, and debugging were acceptance-tested on macOS arm64 on 2026-08-04:
+
+- The full bootstrap installed the added Mason tools and adapters, Terraform/Kotlin/HCL parsers, Metals 1.6.8, Kotlin, and current Terraform 1.15.8; its final doctor passed every declared dependency and link.
+- Real Terraform and Kotlin buffers attached `terraformls` and JetBrains `kotlin_lsp`. Terraform fmt/validate/TFLint and Kotlin ktlint/compile/run passed on disposable projects.
+- Neovim resolved both new Conform formatters and nvim-lint integrations, including project-gated Detekt.
+- Real nvim-dap sessions completed for Python/debugpy, Go/Delve, JavaScript/vscode-js-debug, C/CodeLLDB, Java/JDTLS, Scala/Metals, and Kotlin/Kotlin Debug Adapter. The JavaScript adapter is explicitly bound to IPv4 to avoid macOS localhost resolving its server and client to different address families.
+- Kotlin DAP passed against a compiled Maven project. A Gradle fixture without `gradlew` was rejected with a focused preflight message, preserving project-owned Gradle versions.
+- The released Java Test bundle failed to resolve against JDTLS 1.60's ASM bundle. It was removed from the active configuration while Java main-class DAP remained acceptance-tested; Maven/Gradle tasks remain the stable Java test path.
+
 ## Acceptance criteria
 
 ### Neovim
@@ -499,6 +581,8 @@ Verified on macOS arm64 on 2026-07-14:
 - A project session restores buffers and split layout.
 - Markdown renders usefully inside Neovim.
 - SQLite and PostgreSQL queries can be executed without storing secrets in Git.
+- Terraform and Kotlin attach their intended language servers and expose formatting, linting, and current-context tasks.
+- Debug start/continue, breakpoints, stepping, evaluation, and session cleanup share one mapping vocabulary across supported executable languages.
 
 ### Zsh
 
@@ -509,7 +593,7 @@ Verified on macOS arm64 on 2026-07-14:
 - Directory jumping learns local usage.
 - Nested shells do not multiply PATH entries.
 - Node versions switch per project without NVM startup cost.
-- Java project shells default to Java 17.
+- Java project shells use the machine profile's Java default and fall back to Java 17 when no profile exists.
 - Conda, Fig, and legacy Ruby initialization are absent.
 - Median warm interactive startup should be at most 500 ms unless a measured, user-valued feature justifies more.
 
@@ -518,6 +602,7 @@ Verified on macOS arm64 on 2026-07-14:
 - Plugin/tool versions are locked or installed reproducibly.
 - Updates are deliberate, not automatic on editor startup.
 - The bootstrap process backs up conflicts before linking.
+- Bootstrap can provision a fresh Apple Silicon Mac from Homebrew through editor and language dependencies, and `--check` reports drift afterward.
 - A short maintenance document explains how to update, verify, and roll back.
 - No cloud dependency, secret, or private connection string is committed.
 

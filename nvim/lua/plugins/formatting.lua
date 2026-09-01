@@ -72,6 +72,21 @@ local function java_formatters(bufnr)
 	return {}
 end
 
+local function detekt_config(bufnr)
+	local root =
+		vim.fs.root(bufnr, { "settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts", "pom.xml" })
+	if not root then
+		return nil, nil
+	end
+	for _, relative in ipairs({ "detekt.yml", "detekt.yaml", "config/detekt/detekt.yml", "config/detekt/detekt.yaml" }) do
+		local path = root .. "/" .. relative
+		if vim.fn.filereadable(path) == 1 then
+			return path, root
+		end
+	end
+	return nil, root
+end
+
 local function autoformat_allowed(bufnr)
 	local ft = vim.bo[bufnr].filetype
 	if
@@ -107,6 +122,13 @@ local function autoformat_allowed(bufnr)
 		return find_up(bufnr, { "pom.xml", "build.gradle", "build.gradle.kts" }) ~= nil
 	elseif ft == "scala" or ft == "sbt" then
 		return find_up(bufnr, { "build.sbt", "build.sc", ".scalafmt.conf", ".scala-build" }) ~= nil
+	elseif ft == "kotlin" then
+		return find_up(bufnr, { ".editorconfig", "build.gradle", "build.gradle.kts", "pom.xml" }) ~= nil
+	elseif ft == "terraform" or ft == "terraform-vars" then
+		-- terraform fmt is the canonical formatter and needs no project style file.
+		return true
+	elseif ft == "toml" then
+		return find_up(bufnr, { ".taplo.toml", "taplo.toml" }) ~= nil
 	end
 	return false
 end
@@ -156,7 +178,11 @@ return {
 				c = { "clang_format" },
 				cpp = { "clang_format" },
 				java = java_formatters,
+				kotlin = { "ktlint" },
 				sql = { "sqlfluff" },
+				toml = { "taplo" },
+				terraform = { "terraform_fmt" },
+				["terraform-vars"] = { "terraform_fmt" },
 			},
 		},
 	},
@@ -165,16 +191,33 @@ return {
 		event = { "BufReadPost", "BufWritePost", "InsertLeave" },
 		config = function()
 			local lint = require("lint")
-			lint.linters_by_ft = { sql = { "sqlfluff" } }
+			lint.linters_by_ft = {
+				kotlin = { "ktlint" },
+				sql = { "sqlfluff" },
+				terraform = { "tflint" },
+				["terraform-vars"] = { "tflint" },
+			}
 			vim.api.nvim_create_autocmd({ "BufWritePost", "InsertLeave" }, {
-				group = vim.api.nvim_create_augroup("UserSqlLint", { clear = true }),
+				group = vim.api.nvim_create_augroup("UserLanguageLint", { clear = true }),
 				callback = function(args)
-					if vim.bo[args.buf].filetype == "sql" and sql_is_configured(args.buf) then
+					local ft = vim.bo[args.buf].filetype
+					if ft == "sql" and sql_is_configured(args.buf) then
 						lint.try_lint(nil, {
 							cwd = vim.fs.dirname(
 								find_up(args.buf, { ".sqlfluff", "pyproject.toml", "setup.cfg", "tox.ini" })
 							),
 						})
+					elseif args.event == "BufWritePost" and ft == "kotlin" then
+						lint.try_lint("ktlint")
+						local config, root = detekt_config(args.buf)
+						if config then
+							lint.linters.detekt.args = { "--config", config, "--base-path", root, "--input" }
+							lint.try_lint("detekt", { cwd = root })
+						end
+					elseif args.event == "BufWritePost" and (ft == "terraform" or ft == "terraform-vars") then
+						local cwd = vim.fs.root(args.buf, { ".tflint.hcl", ".terraform", ".git" })
+							or vim.fs.dirname(vim.api.nvim_buf_get_name(args.buf))
+						lint.try_lint("tflint", { cwd = cwd })
 					end
 				end,
 			})

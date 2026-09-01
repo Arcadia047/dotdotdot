@@ -19,6 +19,7 @@ return {
 			transparent_background = false,
 			integrations = {
 				blink_cmp = { style = "bordered" },
+				dap = true,
 				gitsigns = true,
 				lsp_trouble = true,
 				mason = true,

@@ -3,6 +3,10 @@ if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]
   source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
 fi
 
+typeset -g _DOTDOTDOT_REPO_ROOT="${${(%):-%x}:A:h}"
+source "$_DOTDOTDOT_REPO_ROOT/zsh/env.zsh"
+unset _DOTDOTDOT_REPO_ROOT
+
 typeset -U path PATH fpath FPATH
 
 export EDITOR=nvim
@@ -53,8 +57,8 @@ bindkey -e
 
 # Register completions before compinit. Homebrew and Docker own these files.
 fpath=(
-  /opt/homebrew/share/zsh/site-functions
-  /opt/homebrew/share/zsh-completions
+  "${HOMEBREW_PREFIX:-/opt/homebrew}/share/zsh/site-functions"
+  "${HOMEBREW_PREFIX:-/opt/homebrew}/share/zsh-completions"
   "$HOME/.docker/completions"
   $fpath
 )
@@ -64,8 +68,11 @@ zstyle ':completion:*' group-name ''
 zstyle ':completion:*' squeeze-slashes true
 zstyle ':completion:*' use-cache true
 zstyle ':completion:*' cache-path "${XDG_CACHE_HOME:-$HOME/.cache}/zsh/completion"
-zstyle ':completion:*' completer _complete _match _approximate
-zstyle ':completion:*' matcher-list 'm:{a-z}={A-Za-z}' 'r:|[._-]=** r:|=**'
+# Keep the completer chain quiet: _complete for exact matches and _approximate
+# as a bounded fallback. _match and the separator-matching patterns flooded
+# Tab menus with irrelevant fuzzy candidates.
+zstyle ':completion:*' completer _complete _approximate
+zstyle ':completion:*' matcher-list 'm:{a-z}={A-Za-z}'
 zstyle ':completion:*:approximate:*' max-errors 1 numeric
 zstyle ':completion:*:descriptions' format '%F{yellow}-- %d --%f'
 zstyle ':completion:*:messages' format '%F{purple}-- %d --%f'
@@ -89,27 +96,44 @@ comp-rebuild() {
 }
 
 # fzf provides Ctrl-R history search, Ctrl-T file insertion, and Alt-C directory search.
-[[ -r /opt/homebrew/opt/fzf/shell/completion.zsh ]] && source /opt/homebrew/opt/fzf/shell/completion.zsh
-[[ -r /opt/homebrew/opt/fzf/shell/key-bindings.zsh ]] && source /opt/homebrew/opt/fzf/shell/key-bindings.zsh
+[[ -r "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/fzf/shell/completion.zsh" ]] \
+  && source "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/fzf/shell/completion.zsh"
+[[ -r "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/fzf/shell/key-bindings.zsh" ]] \
+  && source "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/fzf/shell/key-bindings.zsh"
 
 # Turn normal completion into a fuzzy, explicitly-selected Tab menu.
-if [[ -r /opt/homebrew/opt/fzf-tab/share/fzf-tab/fzf-tab.zsh ]]; then
-  source /opt/homebrew/opt/fzf-tab/share/fzf-tab/fzf-tab.zsh
+if [[ -r "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/fzf-tab/share/fzf-tab/fzf-tab.zsh" ]]; then
+  source "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/fzf-tab/share/fzf-tab/fzf-tab.zsh"
   zstyle ':fzf-tab:*' fzf-flags --height=55% --layout=reverse --border
   zstyle ':fzf-tab:*' switch-group '<' '>'
   zstyle ':fzf-tab:complete:cd:*' fzf-preview 'ls -la --color=always $realpath 2>/dev/null || ls -la $realpath'
 fi
 
 # Lightweight, non-AI suggestions; Ctrl-F accepts the visible suggestion.
-if [[ -r /opt/homebrew/share/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
+if [[ -r "${HOMEBREW_PREFIX:-/opt/homebrew}/share/zsh-autosuggestions/zsh-autosuggestions.zsh" ]]; then
   ZSH_AUTOSUGGEST_STRATEGY=(history completion)
   ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=40
-  source /opt/homebrew/share/zsh-autosuggestions/zsh-autosuggestions.zsh
+  source "${HOMEBREW_PREFIX:-/opt/homebrew}/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
   bindkey '^F' autosuggest-accept
+
+  # Tab accepts the grey suggestion when one is visible; otherwise it opens the
+  # fzf fuzzy completion menu. Ctrl-F also accepts the visible suggestion.
+  # back to normal completion. Ctrl-F still accepts word-by-word.
+  accept-suggestion-or-complete() {
+    if [[ -n "${POSTDISPLAY:-}" ]]; then
+      zle autosuggest-accept
+    elif (( $+widgets[fzf-tab-complete] )); then
+      zle fzf-tab-complete
+    else
+      zle expand-or-complete
+    fi
+  }
+  zle -N accept-suggestion-or-complete
+  bindkey '^I' accept-suggestion-or-complete
 fi
 
-if [[ -r /opt/homebrew/share/zsh-history-substring-search/zsh-history-substring-search.zsh ]]; then
-  source /opt/homebrew/share/zsh-history-substring-search/zsh-history-substring-search.zsh
+if [[ -r "${HOMEBREW_PREFIX:-/opt/homebrew}/share/zsh-history-substring-search/zsh-history-substring-search.zsh" ]]; then
+  source "${HOMEBREW_PREFIX:-/opt/homebrew}/share/zsh-history-substring-search/zsh-history-substring-search.zsh"
   bindkey '^[[A' history-substring-search-up
   bindkey '^[[B' history-substring-search-down
   bindkey '^[OA' history-substring-search-up
@@ -136,10 +160,10 @@ alias ..='cd ..'
 alias ...='cd ../..'
 alias ....='cd ../../..'
 
-[[ -r /opt/homebrew/share/powerlevel10k/powerlevel10k.zsh-theme ]] \
-  && source /opt/homebrew/share/powerlevel10k/powerlevel10k.zsh-theme
+[[ -r "${HOMEBREW_PREFIX:-/opt/homebrew}/share/powerlevel10k/powerlevel10k.zsh-theme" ]] \
+  && source "${HOMEBREW_PREFIX:-/opt/homebrew}/share/powerlevel10k/powerlevel10k.zsh-theme"
 [[ -r "$HOME/.p10k.zsh" ]] && source "$HOME/.p10k.zsh"
 
 # Syntax highlighting must be sourced after every other ZLE plugin.
-[[ -r /opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]] \
-  && source /opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+[[ -r "${HOMEBREW_PREFIX:-/opt/homebrew}/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]] \
+  && source "${HOMEBREW_PREFIX:-/opt/homebrew}/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
