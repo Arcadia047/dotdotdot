@@ -38,7 +38,11 @@ setopt HIST_IGNORE_SPACE
 setopt HIST_REDUCE_BLANKS
 setopt HIST_SAVE_NO_DUPS
 setopt HIST_VERIFY
-setopt SHARE_HISTORY
+# INC_APPEND_HISTORY writes each command to the shared history file
+# immediately but, unlike SHARE_HISTORY, never imports other running shells'
+# lines into this session — so arrow-up stays local to the current tmux
+# session/pane while new shells still see the full shared history.
+setopt INC_APPEND_HISTORY
 
 setopt ALWAYS_TO_END
 setopt AUTO_CD
@@ -140,6 +144,29 @@ if [[ -r "${HOMEBREW_PREFIX:-/opt/homebrew}/share/zsh-history-substring-search/z
   bindkey '^[OB' history-substring-search-down
 fi
 
+# Start the tmux server on first interactive use so `tmux ls` works in a
+# fresh terminal instead of reporting "no server running". A throwaway
+# _boot session keeps the server alive while tmux-continuum's auto-restore
+# (fires ~1s after server start) recreates the saved sessions; the boot
+# session is removed afterwards so resurrect never persists it.
+ensure_tmux_server() {
+  (( $+commands[tmux] )) || return 0
+  [[ -o interactive && -z "$TMUX" && -z "$TMUX_BOOTSTRAPPED" ]] || return 0
+  typeset -g TMUX_BOOTSTRAPPED=1
+  tmux has-session 2>/dev/null && return 0
+  tmux new-session -d -s _boot 2>/dev/null || return 0
+  (
+    integer i
+    for (( i = 0; i < 10; i++ )); do
+      sleep 1
+      (( $(tmux list-sessions 2>/dev/null | wc -l) > 1 )) && break
+    done
+    tmux has-session -t _boot 2>/dev/null && tmux kill-session -t _boot
+  ) &!
+}
+ensure_tmux_server
+
+# Per-project Node versions without the startup cost of NVM.
 # Per-project Node versions without the startup cost of NVM.
 if (( $+commands[fnm] )); then
   eval "$(fnm env --use-on-cd --version-file-strategy=recursive --corepack-enabled --shell zsh)"
