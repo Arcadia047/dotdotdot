@@ -22,7 +22,9 @@ if [[ -n "$_dotdotdot_brew_bin" ]]; then
   eval "$("$_dotdotdot_brew_bin" shellenv)"
 fi
 
-typeset -g DOTDOTDOT_DEFAULT_JAVA_VERSION="${DOTDOTDOT_DEFAULT_JAVA_VERSION:-17}"
+# Machine preferences (Java version, extra PATH) live in machine.zsh, never in
+# this repo, so this repository never overrides a machine's own JVM choice.
+typeset -ga DOTDOTDOT_PATH_PREPEND
 typeset -ga DOTDOTDOT_PATH_PREPEND
 typeset -ga DOTDOTDOT_PATH_APPEND
 typeset -g DOTDOTDOT_MACHINE_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/dotdotdot/machine.zsh"
@@ -31,17 +33,8 @@ if [[ -r "$DOTDOTDOT_MACHINE_CONFIG" ]]; then
   source "$DOTDOTDOT_MACHINE_CONFIG"
 fi
 
-case "$DOTDOTDOT_DEFAULT_JAVA_VERSION" in
-  17 | 21) ;;
-  *) DOTDOTDOT_DEFAULT_JAVA_VERSION=17 ;;
-esac
-
-typeset _dotdotdot_java_version="$DOTDOTDOT_DEFAULT_JAVA_VERSION"
-case "$_dotdotdot_java_version" in
-  17 | 21) ;;
-  *) _dotdotdot_java_version="$DOTDOTDOT_DEFAULT_JAVA_VERSION" ;;
-esac
-export DOTDOTDOT_JAVA_VERSION="$_dotdotdot_java_version"
+# Remove retired runtime managers and paths that this module reconstructs.
+# Machine-set JAVA_HOME is respected as-is; the repo never defaults it.
 
 # Remove retired runtime managers and paths that this module reconstructs.
 typeset -a _dotdotdot_clean_path
@@ -55,15 +48,7 @@ for _dotdotdot_entry in "${path[@]}"; do
 done
 
 unset NVM_DIR PYENV_ROOT PYENV_VERSION CONDA_EXE CONDA_PREFIX CONDA_DEFAULT_ENV CONDA_PYTHON_EXE CONDA_SHLVL _CE_CONDA _CE_M
-unset JAVA_HOME
-
-typeset _dotdotdot_java_home=""
-if [[ -n "${HOMEBREW_PREFIX:-}" ]]; then
-  _dotdotdot_java_home="$HOMEBREW_PREFIX/opt/openjdk@${DOTDOTDOT_JAVA_VERSION}/libexec/openjdk.jdk/Contents/Home"
-  if [[ -d "$_dotdotdot_java_home" ]]; then
-    export JAVA_HOME="$_dotdotdot_java_home"
-  fi
-fi
+# JAVA_HOME is intentionally not set here — a machine opts in via machine.zsh.
 
 typeset -a _dotdotdot_prepend_candidates _dotdotdot_prepend _dotdotdot_append
 _dotdotdot_prepend_candidates=("${DOTDOTDOT_PATH_PREPEND[@]}")

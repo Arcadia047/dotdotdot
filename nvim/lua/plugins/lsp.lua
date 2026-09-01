@@ -332,7 +332,7 @@ return {
 						"-data",
 						vim.fn.stdpath("cache") .. "/jdtls-workspaces/" .. vim.fn.sha256(root):sub(1, 16),
 					},
-					cmd_env = { JAVA_HOME = java.home("21") },
+						cmd_env = { JAVA_HOME = java.home(java.default_version()) },
 					root_dir = root,
 					capabilities = require("blink.cmp").get_lsp_capabilities(),
 					init_options = { bundles = bundles },

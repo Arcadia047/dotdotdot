@@ -35,6 +35,8 @@ Machine preferences are read from ~/.config/dotdotdot/machine.zsh.
 Copy zsh/machine.example.zsh there to override the default Java version or PATH.
 The optional ~/.config/dotdotdot/Brewfile.local can declare machine-only packages.
 Neither local file is created, linked, or overwritten by bootstrap.
+The shared theme (dark or light Catppuccin) is set once in theme.conf and
+applied to WezTerm, tmux, and Neovim; switch at runtime with `theme light|dark`.
 EOF
 }
 
@@ -231,10 +233,35 @@ link_dotfiles() {
   link_item "$repo_root/.zprofile" "$HOME/.zprofile"
   link_item "$repo_root/.zshrc" "$HOME/.zshrc"
   link_item "$repo_root/.p10k.zsh" "$HOME/.p10k.zsh"
+  # Single theme source of truth, read by WezTerm, tmux, and Neovim.
+  link_item "$repo_root/theme.conf" "$HOME/.config/dotfiles-theme"
 }
 
 resolve_java_version() {
-  /bin/zsh -dfc 'source "$1"; print -r -- "$DOTDOTDOT_JAVA_VERSION"' dotdotdot "$repo_root/zsh/env.zsh"
+  local version=""
+  if [[ -r "$machine_config" ]]; then
+    version="$(/bin/zsh -dfc 'source "$1" >/dev/null 2>&1; print -r -- "${DOTDOTDOT_JAVA_VERSION:-${JAVA_HOME##*openjdk@}}"' dotdotdot "$machine_config")"
+  fi
+  version="${version%%/*}"
+  if [[ ! "$version" =~ ^[0-9]+$ ]]; then
+    # No machine preference: default to the newest Homebrew OpenJDK present.
+    local dir candidate release newest=0
+    for dir in "${HOMEBREW_PREFIX:-/opt/homebrew}"/opt/openjdk@*/ "${HOMEBREW_PREFIX:-/opt/homebrew}"/opt/openjdk/; do
+      [[ -d "$dir/libexec/openjdk.jdk/Contents/Home" ]] || continue
+      candidate="${dir%/}"
+      candidate="${candidate##*openjdk@}"
+      if [[ ! "$candidate" =~ ^[0-9]+$ ]]; then
+        release="$dir/libexec/openjdk.jdk/Contents/Home/release"
+        [[ -r "$release" ]] && candidate="$(sed -n 's/^JAVA_VERSION="\([0-9]*\).*/\1/p' "$release" | head -1)"
+      fi
+      if [[ "$candidate" =~ ^[0-9]+$ ]] && ((candidate > newest)); then
+        newest="$candidate"
+      fi
+    done
+    ((newest > 0)) && version="$newest"
+  fi
+  [[ "$version" =~ ^[0-9]+$ ]] || version="17"
+  printf '%s\n' "$version"
 }
 
 configure_runtime_environment() {
@@ -257,11 +284,11 @@ install_runtime_tools() {
   fi
   run fnm use default
   if ! command -v scala-cli >/dev/null 2>&1; then
-    run cs install scala-cli:1.11.0
+    run coursier install scala-cli:1.11.0
   fi
   if [[ ! -x "$metals_dir/metals" || ! -r "$metals_version_file" || "$(<"$metals_version_file")" != "$metals_version" ]]; then
     run mkdir -p "$metals_dir"
-    run cs bootstrap --java-opt -Xss4m --java-opt -Xms100m "org.scalameta:metals_2.13:${metals_version}" -o "$metals_dir/metals" -f
+    run coursier bootstrap --java-opt -Xss4m --java-opt -Xms100m "org.scalameta:metals_2.13:${metals_version}" -o "$metals_dir/metals" -f
     if ((dry_run)); then
       log "[dry-run] record Metals $metals_version in $metals_version_file"
     else
@@ -358,7 +385,20 @@ check_installation() {
     check_ok "Homebrew ($HOMEBREW_PREFIX)"
   fi
 
-  for command_name in aerospace brew clang cmake codelldb cs debugpy-adapter detekt direnv dlv fd fnm fzf git go intellij-server java js-debug-adapter kotlin kotlin-debug-adapter kotlinc ktlint lazygit lua make mvn node npm nvim psql python3 rg scala-cli shellcheck sqlite3 terraform terraform-ls tflint tmux wezterm zoxide zsh; do
+  # Mirror the login-shell PATH that zsh/env.zsh builds, so command checks
+  # reflect what an actual shell on this machine sees (e.g. coursier-installed
+  # tools like scala-cli, mason adapters).
+  local _dotdotdot_path_entry
+  for _dotdotdot_path_entry in \
+    "$HOME/.local/bin" \
+    "$HOME/go/bin" \
+    "$HOME/Library/Application Support/Coursier/bin" \
+    "$HOME/.local/share/nvim/mason/bin"; do
+    [[ -d "$_dotdotdot_path_entry" ]] && PATH="$_dotdotdot_path_entry:$PATH"
+  done
+  export PATH
+
+  for command_name in aerospace brew clang cmake codelldb coursier debugpy-adapter detekt direnv dlv fd fnm fzf git go intellij-server java js-debug-adapter kotlin kotlin-debug-adapter kotlinc ktlint lazygit lua make mvn node npm nvim psql python3 rg scala-cli shellcheck sqlite3 terraform terraform-ls tflint tmux wezterm zoxide zsh; do
     check_command "$command_name"
   done
 
@@ -370,6 +410,7 @@ check_installation() {
   check_link "$repo_root/.zprofile" "$HOME/.zprofile"
   check_link "$repo_root/.zshrc" "$HOME/.zshrc"
   check_link "$repo_root/.p10k.zsh" "$HOME/.p10k.zsh"
+  check_link "$repo_root/theme.conf" "$HOME/.config/dotfiles-theme"
 
   check_submodules
   check_java
@@ -457,7 +498,7 @@ main() {
     log "Backups stored in: $backup_root"
   fi
   if [[ ! -r "$machine_config" ]]; then
-    log "Using shared Java 17 default. Copy zsh/machine.example.zsh to $machine_config to customize this Mac."
+    log "No machine profile; Java follows the newest Homebrew OpenJDK installed. Copy zsh/machine.example.zsh to $machine_config to customize this Mac."
   fi
 
   log "Bootstrap complete. Run ./bootstrap.sh --check to verify the machine."

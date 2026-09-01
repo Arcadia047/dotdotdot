@@ -4,7 +4,23 @@ local act = wezterm.action
 
 -- One explicit switch keeps WezTerm, tmux, and Neovim on the same palette.
 -- Change this to "light" to use Catppuccin Latte everywhere on the next launch.
-local theme_mode = "dark"
+-- One explicit switch keeps WezTerm, tmux, and Neovim on the same palette.
+-- The single source of truth is the repo's theme.conf, installed by bootstrap
+-- as ~/.config/dotfiles-theme ("dark" or "light"). Switch it with `theme light|dark`.
+local function read_theme_mode()
+	local file = io.open(os.getenv("HOME") .. "/.config/dotfiles-theme", "r")
+	if not file then
+		return "dark"
+	end
+	local mode = file:read("*l")
+	file:close()
+	if mode == "light" then
+		return "light"
+	end
+	return "dark"
+end
+
+local theme_mode = read_theme_mode()
 local color_schemes = {
 	dark = "Catppuccin Macchiato",
 	light = "Catppuccin Latte",
