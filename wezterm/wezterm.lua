@@ -3,8 +3,6 @@ local config = wezterm.config_builder()
 local act = wezterm.action
 
 -- One explicit switch keeps WezTerm, tmux, and Neovim on the same palette.
--- Change this to "light" to use Catppuccin Latte everywhere on the next launch.
--- One explicit switch keeps WezTerm, tmux, and Neovim on the same palette.
 -- The single source of truth is the repo's theme.conf, installed by bootstrap
 -- as ~/.config/dotfiles-theme ("dark" or "light"). Switch it with `theme light|dark`.
 local function read_theme_mode()
@@ -102,9 +100,6 @@ config.keys = {
 		mods = "CMD",
 		action = act.CloseCurrentTab({ confirm = true }),
 	},
-	-- Move cursor word by word (without selecting)
-	{ key = "LeftArrow", mods = "OPT", action = act.SendKey({ key = "b", mods = "ALT" }) },
-	{ key = "RightArrow", mods = "OPT", action = act.SendKey({ key = "f", mods = "ALT" }) },
 	-- Move cursor word by word (without selecting)
 	{ key = "LeftArrow", mods = "OPT", action = act.SendKey({ key = "b", mods = "ALT" }) },
 	{ key = "RightArrow", mods = "OPT", action = act.SendKey({ key = "f", mods = "ALT" }) },

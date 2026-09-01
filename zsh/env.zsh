@@ -25,7 +25,6 @@ fi
 # Machine preferences (Java version, extra PATH) live in machine.zsh, never in
 # this repo, so this repository never overrides a machine's own JVM choice.
 typeset -ga DOTDOTDOT_PATH_PREPEND
-typeset -ga DOTDOTDOT_PATH_PREPEND
 typeset -ga DOTDOTDOT_PATH_APPEND
 typeset -g DOTDOTDOT_MACHINE_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/dotdotdot/machine.zsh"
 
@@ -35,8 +34,7 @@ fi
 
 # Remove retired runtime managers and paths that this module reconstructs.
 # Machine-set JAVA_HOME is respected as-is; the repo never defaults it.
-
-# Remove retired runtime managers and paths that this module reconstructs.
+typeset -a _dotdotdot_clean_path
 typeset -a _dotdotdot_clean_path
 typeset _dotdotdot_entry
 for _dotdotdot_entry in "${path[@]}"; do
@@ -79,5 +77,5 @@ if [[ -n "${HOMEBREW_PREFIX:-}" && -d "$HOMEBREW_PREFIX/opt/libpq/lib/pkgconfig"
   esac
 fi
 
-unset _dotdotdot_brew_bin _dotdotdot_java_version _dotdotdot_java_home
+unset _dotdotdot_brew_bin
 unset _dotdotdot_clean_path _dotdotdot_entry _dotdotdot_prepend_candidates _dotdotdot_prepend _dotdotdot_append

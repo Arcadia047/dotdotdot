@@ -264,12 +264,45 @@ resolve_java_version() {
   printf '%s\n' "$version"
 }
 
+# An existing JDK home for the given version: the versioned keg, then the
+# unversioned keg (installed as a dependency of maven/kotlin), then a
+# machine-declared JAVA_HOME. Fails when none exists.
+find_java_home() {
+  local version="$1"
+  local prefix="${HOMEBREW_PREFIX:-/opt/homebrew}"
+  local home="$prefix/opt/openjdk@${version}/libexec/openjdk.jdk/Contents/Home"
+  if [[ -x "$home/bin/java" ]]; then
+    printf '%s\n' "$home"
+    return 0
+  fi
+  home="$prefix/opt/openjdk/libexec/openjdk.jdk/Contents/Home"
+  if [[ -x "$home/bin/java" ]]; then
+    printf '%s\n' "$home"
+    return 0
+  fi
+  if [[ -r "$machine_config" ]]; then
+    home="$(/bin/zsh -dfc 'source "$1" >/dev/null 2>&1; print -r -- "${JAVA_HOME:-}"' dotdotdot "$machine_config")"
+    if [[ -x "$home/bin/java" ]]; then
+      printf '%s\n' "$home"
+      return 0
+    fi
+  fi
+  return 1
+}
+
 configure_runtime_environment() {
-  local java_version
+  local java_version java_home
   java_version="$(resolve_java_version)"
-  export JAVA_HOME="$HOMEBREW_PREFIX/opt/openjdk@${java_version}/libexec/openjdk.jdk/Contents/Home"
+  if java_home="$(find_java_home "$java_version")"; then
+    export JAVA_HOME="$java_home"
+  else
+    # Nominal path for dry runs; real runs require an installed JDK.
+    export JAVA_HOME="${HOMEBREW_PREFIX:-/opt/homebrew}/opt/openjdk@${java_version}/libexec/openjdk.jdk/Contents/Home"
+    if ((!dry_run)); then
+      die "No usable JDK for Java $java_version. Install one with brew, or set JAVA_HOME in $machine_config."
+    fi
+  fi
   export PATH="$JAVA_HOME/bin:$HOME/Library/Application Support/Coursier/bin:$HOME/.local/share/nvim/mason/bin:$HOMEBREW_PREFIX/opt/libpq/bin:$PATH"
-  [[ -x "$JAVA_HOME/bin/java" ]] || die "The selected Java $java_version runtime is missing at $JAVA_HOME."
 }
 
 install_runtime_tools() {
@@ -292,7 +325,7 @@ install_runtime_tools() {
     if ((dry_run)); then
       log "[dry-run] record Metals $metals_version in $metals_version_file"
     else
-      printf '%s\n' "$metals_version" > "$metals_version_file"
+      printf '%s\n' "$metals_version" >"$metals_version_file"
     fi
   fi
 
@@ -354,14 +387,12 @@ check_submodules() {
 }
 
 check_java() {
-  local java_version
-  local java_home
+  local java_version java_home
   java_version="$(resolve_java_version)"
-  java_home="${HOMEBREW_PREFIX:-/opt/homebrew}/opt/openjdk@${java_version}/libexec/openjdk.jdk/Contents/Home"
-  if [[ -x "$java_home/bin/java" ]]; then
-    check_ok "Java $java_version default ($java_home)"
+  if java_home="$(find_java_home "$java_version")"; then
+    check_ok "Java $java_version ($java_home)"
   else
-    check_bad "Java $java_version default ($java_home)"
+    check_bad "Java $java_version runtime (none installed and no JAVA_HOME in $machine_config)"
   fi
 }
 
@@ -389,10 +420,16 @@ check_installation() {
   # reflect what an actual shell on this machine sees (e.g. coursier-installed
   # tools like scala-cli, mason adapters).
   local _dotdotdot_path_entry
+  local _dotdotdot_java_home=""
+  if [[ -r "$machine_config" ]]; then
+    _dotdotdot_java_home="$(/bin/zsh -dfc 'source "$1" >/dev/null 2>&1; print -r -- "${JAVA_HOME:-}"' dotdotdot "$machine_config")"
+  fi
   for _dotdotdot_path_entry in \
     "$HOME/.local/bin" \
     "$HOME/go/bin" \
     "$HOME/Library/Application Support/Coursier/bin" \
+    "$HOME/.bun/bin" \
+    "${_dotdotdot_java_home:-/nonexistent}/bin" \
     "$HOME/.local/share/nvim/mason/bin"; do
     [[ -d "$_dotdotdot_path_entry" ]] && PATH="$_dotdotdot_path_entry:$PATH"
   done
@@ -445,23 +482,23 @@ check_installation() {
 main() {
   while (($# > 0)); do
     case "$1" in
-      --dry-run)
-        dry_run=1
-        ;;
-      --install)
-        install_tools=1
-        ;;
-      --check)
-        check_only=1
-        ;;
-      -h | --help)
-        usage
-        exit 0
-        ;;
-      *)
-        usage
-        die "Unknown argument: $1"
-        ;;
+    --dry-run)
+      dry_run=1
+      ;;
+    --install)
+      install_tools=1
+      ;;
+    --check)
+      check_only=1
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage
+      die "Unknown argument: $1"
+      ;;
     esac
     shift
   done
