@@ -125,7 +125,7 @@ return {
 	{
 		"akinsho/bufferline.nvim",
 		event = "VeryLazy",
-		dependencies = { "nvim-tree/nvim-web-devicons", "catppuccin/nvim" },
+		dependencies = { "nvim-tree/nvim-web-devicons", "rose-pine/neovim" },
 		keys = {
 			{ "[b", "<cmd>BufferLineCyclePrev<cr>", desc = "Previous Buffer" },
 			{ "]b", "<cmd>BufferLineCycleNext<cr>", desc = "Next Buffer" },
@@ -145,7 +145,8 @@ return {
 		},
 		opts = function()
 			return {
-				highlights = require("catppuccin.special.bufferline").get_theme(),
+				-- Official Rosé Pine integration; follows the active variant.
+				highlights = require("rose-pine.plugins.bufferline"),
 				options = {
 					diagnostics = "nvim_lsp",
 					always_show_bufferline = false,

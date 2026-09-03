@@ -20,8 +20,8 @@ end
 
 local theme_mode = read_theme_mode()
 local color_schemes = {
-	dark = "Catppuccin Macchiato",
-	light = "Catppuccin Latte",
+	dark = "rose-pine",
+	light = "rose-pine-dawn",
 }
 
 -- Font configuration

@@ -13,42 +13,23 @@ local function resolve_theme_mode()
 end
 
 local theme_mode = resolve_theme_mode()
-local flavors = {
-	dark = "macchiato",
-	light = "latte",
-}
 
 return {
 	{
-		"catppuccin/nvim",
-		name = "catppuccin",
+		"rose-pine/neovim",
+		name = "rose-pine",
 		lazy = false,
 		priority = 1000,
 		opts = {
-			flavour = flavors[theme_mode],
-			background = {
-				light = "latte",
-				dark = "macchiato",
-			},
-			transparent_background = false,
-			integrations = {
-				blink_cmp = { style = "bordered" },
-				dap = true,
-				gitsigns = true,
-				lsp_trouble = true,
-				mason = true,
-				neotree = true,
-				overseer = true,
-				render_markdown = true,
-				telescope = { enabled = true },
-				vim_dadbod_ui = true,
-				which_key = true,
-			},
+			-- "auto" selects dawn when background=light, dark_variant when dark.
+			dark_variant = "main",
+			dim_inactive_windows = false,
+			extend_background_behind_borders = true,
 		},
 		config = function(_, opts)
 			vim.o.background = theme_mode
-			require("catppuccin").setup(opts)
-			vim.cmd.colorscheme("catppuccin-" .. flavors[theme_mode])
+			require("rose-pine").setup(opts)
+			vim.cmd.colorscheme(theme_mode == "light" and "rose-pine-dawn" or "rose-pine")
 		end,
 	},
 }
