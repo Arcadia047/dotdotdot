@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "$repo_root"
+for command_name in python3 nvim shellcheck stylua shfmt; do
+  command -v "$command_name" >/dev/null || {
+    printf 'Missing check dependency: %s\n' "$command_name" >&2
+    exit 1
+  }
+done
+bash -n bootstrap.sh scripts/check scripts/use-wezterm-nightly
+for file in .zshrc .zprofile zsh/*.zsh; do /bin/zsh -n "$file"; done
+shellcheck bootstrap.sh scripts/check scripts/use-wezterm-nightly
+shfmt -d -i 2 bootstrap.sh scripts/check scripts/use-wezterm-nightly
+stylua --check nvim wezterm scripts/*.lua tests/*.lua
+python3 -m unittest discover -s tests -p 'test_*.py' -v
+if [[ -d .git || -f .git ]]; then git diff --check; fi
+printf '%s\n' 'All repository checks passed. Run ./bootstrap.sh --check for this machine; see README.md for interactive acceptance.'

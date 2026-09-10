@@ -162,7 +162,7 @@ runtimes and build systems must still exist outside Neovim:
 - Python project virtual environments remain project-local; Mason's debugpy
   environment only runs the adapter.
 - Node/npm remains necessary for JavaScript language tools and debug targets.
-- Java 21 launches jdtls while the machine profile selects Java 17 or 21 for
+- Java 21+ launches jdtls independently; see README.md for current runtime selection. Historically the machine profile selected Java 17 or 21 for
   projects.
 - Coursier continues to own Scala CLI and Metals because Mason has no packages
   for them.

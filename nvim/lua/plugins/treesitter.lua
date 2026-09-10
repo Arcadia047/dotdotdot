@@ -35,6 +35,7 @@ local parsers = {
 local indent_filetypes = {
 	c = true,
 	cpp = true,
+	cuda = true,
 	css = true,
 	go = true,
 	html = true,
@@ -66,16 +67,83 @@ return {
 				treesitter.update(parsers):wait(300000)
 			end, { desc = "Update configured Treesitter parsers" })
 
+			vim.treesitter.language.register("cpp", "cuda")
+			local pending, failed = {}, {}
+			local function attach(bufnr, language)
+				if not vim.api.nvim_buf_is_valid(bufnr) then
+					return
+				end
+				local ft = vim.bo[bufnr].filetype
+				if (vim.treesitter.language.get_lang(ft) or ft) ~= language then
+					return
+				end
+				local ok = pcall(vim.treesitter.start, bufnr, language)
+				if ok and indent_filetypes[ft] then
+					vim.bo[bufnr].indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()"
+				end
+				return ok
+			end
+			local function ensure(bufnr)
+				if not vim.api.nvim_buf_is_valid(bufnr) or vim.bo[bufnr].buftype ~= "" then
+					return
+				end
+				local ft = vim.bo[bufnr].filetype
+				local language = vim.treesitter.language.get_lang(ft) or ft
+				if attach(bufnr, language) or failed[language] then
+					return
+				end
+				if not vim.tbl_contains(parsers, language) then
+					return
+				end
+				if pending[language] then
+					pending[language][bufnr] = true
+					return
+				end
+				pending[language] = { [bufnr] = true }
+				local function install_parser(ready)
+					if not ready then
+						pending[language] = nil
+						failed[language] = true
+						return
+					end
+					treesitter.install({ language }):await(function(err, installed)
+						vim.schedule(function()
+							local buffers = pending[language] or {}
+							pending[language] = nil
+							if err or not installed then
+								failed[language] = true
+								vim.notify(
+									"Parser installation failed for " .. language .. "; :ToolingInstall retries",
+									vim.log.levels.ERROR
+								)
+								return
+							end
+							for buf in pairs(buffers) do
+								attach(buf, language)
+							end
+						end)
+					end)
+				end
+				if vim.fn.executable("tree-sitter") == 1 then
+					install_parser(true)
+				else
+					require("config.tools").install({ "tree-sitter-cli" }, install_parser)
+				end
+			end
 			vim.api.nvim_create_autocmd("FileType", {
 				group = vim.api.nvim_create_augroup("UserTreesitter", { clear = true }),
 				callback = function(args)
-					local filetype = vim.bo[args.buf].filetype
-					local parser_lang = filetype == "jsonc" and "json" or filetype
-					local ok = pcall(vim.treesitter.start, args.buf, parser_lang)
-
-					if ok and indent_filetypes[filetype] then
-						vim.bo[args.buf].indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()"
-					end
+					vim.schedule(function()
+						ensure(args.buf)
+					end)
+				end,
+			})
+			vim.api.nvim_create_autocmd("User", {
+				group = "UserTreesitter",
+				pattern = "LanguageToolsRetry",
+				callback = function()
+					failed = {}
+					ensure(vim.api.nvim_get_current_buf())
 				end,
 			})
 		end,

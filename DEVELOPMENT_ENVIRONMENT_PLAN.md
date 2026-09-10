@@ -1,7 +1,11 @@
+> Current navigation contract: [KEYBINDINGS.md](KEYBINDINGS.md). The September 2026 revision uses Ctrl-h/l for Neovim buffers and Ctrl-k/j for tmux windows, keeps split focus behind explicit prefixes, and makes WezTerm a host with explicit utility shortcuts. Dated acceptance below remains historical.
+
 # Development Environment Plan
 
-Status: implemented and acceptance-tested
-Last updated: 2026-08-04
+Status: implemented; acceptance results below are dated historical records
+Last updated: 2026-09-10
+
+Current installation, runtime policy, checks, and update procedures: [README.md](README.md).
 
 ## North star
 
@@ -32,7 +36,7 @@ Prefer mature native functionality and language-server capabilities over overlap
 - Use VS Code as the pragmatic exception for rich `.ipynb` notebook work.
 - Keep Neovim hand-built and modular; do not restore LazyVim as a framework.
 - Use tmux as the long-running process and shell layer.
-- Use Catppuccin Macchiato for the active dark theme and Latte for the optional light theme. WezTerm's `theme_mode` is the single switch exported to tmux and Neovim.
+- Use Catppuccin Macchiato for the active dark theme and Latte for the optional light theme. The machine-local `dotfiles-theme` file is authoritative for WezTerm, tmux, and Neovim; `theme.conf` only seeds new installations.
 - Do not add a general Neovim terminal manager initially.
 - Restore Neovim buffers and split layouts per project.
 - Keep completion explicit: no preselection, no ghost text, manual selection, Enter to accept.
@@ -43,14 +47,14 @@ Prefer mature native functionality and language-server capabilities over overlap
 - Support per-project Node versions with a faster replacement for NVM.
 - Remove Conda initialization.
 - Keep the Zsh experience explicit and Homebrew-managed instead of adding a turnkey shell framework with overlapping features and a separate update path.
-- Use a machine-local Java project default (17 when unspecified) and a separate Java 21 runtime for jdtls.
+- Use a machine-local Java project default and a separately selected Java 21+ runtime for jdtls, through one shared resolver.
 - Optimize Scala support for learning and small exercises, not enterprise Scala projects.
 - Support SQLite and PostgreSQL; never commit database credentials.
 - Use one shared debugger workflow for executable languages with mature adapters; keep project launch details in `.vscode/launch.json` when global discovery is insufficient.
 
 ## Implemented system
 
-This document is the canonical scope and maintenance reference. Future changes should preserve the north star and pass the change-control rule at the end of the document.
+This document records design scope and historical acceptance; README.md is the current maintenance reference. Future changes should preserve the north star and pass the change-control rule at the end of the document.
 
 - Neovim is a curated, hand-owned IDE rather than a distribution. The configuration is split into core, editor, language, formatting, debugging, Treesitter, workflow, and theme modules.
 - Telescope, Neo-tree, Bufferline, persistence, Which-key, Gitsigns, Trouble, and native tmux navigation provide one workspace model without overlapping alternatives.
@@ -64,7 +68,7 @@ This document is the canonical scope and maintenance reference. Future changes s
 - Dadbod supports SQLite/PostgreSQL without committed connection strings. Render Markdown supplies inline editor rendering without rebuilding a notebook stack.
 - Zsh uses one cached native completion initialization, fzf-tab, local autosuggestions, syntax highlighting, prefix history search, fzf history/files/directories, zoxide, direnv, and fnm.
 - WezTerm, tmux, and Neovim share one Catppuccin mode: Macchiato is the default dark palette and Latte is the prepared light palette.
-- Homebrew Python is the system Python, each Mac selects Java 17 or 21 through a local profile, Java 21 is private to jdtls, fnm owns per-project Node, Coursier/Scala CLI/Metals own Scala learning workflows, and Homebrew provides Kotlin and Terraform CLIs for shell and task use.
+- Homebrew Python is the system Python, each Mac selects project and jdtls Java runtimes independently through a local profile, fnm owns per-project Node, Coursier/Scala CLI/Metals own Scala learning workflows, and Homebrew provides Kotlin and Terraform CLIs for shell and task use.
 - The Brewfile and bootstrap script provision Homebrew, the supported CLI tools, WezTerm, AeroSpace, fonts, runtimes, editor plugins, and pinned tmux plugins while backing up conflicting links before changing them.
 
 Intentional boundaries remain: rich Jupyter notebooks stay in VS Code; tmux owns persistent terminals; Neotest, `refactoring.nvim`, AI completion, and general snippet packs remain deferred. Bash, Terraform, SQL, and data/markup formats intentionally have no DAP because validation and task output fit those workflows better than stepping.
@@ -216,9 +220,9 @@ Language-specific complexity must live in separate modules and load only for rel
 
 Java policy:
 
-- Project/build default: Java 17
-- jdtls launcher runtime: Java 21
-- Do not make Java 26 a project default
+- Project/standalone default: explicit version, then JAVA_HOME, then newest installed JDK; project build toolchains win
+- jdtls launcher runtime: explicit independent version or newest installed JDK, requiring Java 21+
+- Missing explicit runtime choices fail; discovered JDK paths are preserved
 - Prefer Maven/Gradle wrappers from the repository
 - Configure a persistent, project-specific jdtls workspace directory
 
@@ -345,7 +349,7 @@ Compiler, linter, and test output should feed quickfix/diagnostics when parsable
 - Remove Conda initialization.
 - Keep Homebrew Python as the default Python.
 - Use virtual environments for Python projects.
-- Default to Java 17, allow each Mac to select Java 21 locally, and keep jdtls on Java 21 independently.
+- Honor machine-local Java choices and select the Java 21+ jdtls launcher independently; do not force a shell JAVA_HOME.
 - Retain Go.
 - Retain Coursier and use Scala CLI/Metals for Scala learning.
 - Keep Bun only if an actual Bun project requires it.
@@ -487,7 +491,7 @@ From this repository:
 
 On a fresh Apple Silicon Mac, bootstrap requests Apple's Command Line Tools if necessary, installs Homebrew from its official installer, installs the shared Brewfile (including WezTerm, AeroSpace, Maple Mono, tmux, Neovim, zsh tools, Kotlin, Terraform, runtimes, and build tools), initializes pinned tmux plugins, links the configs, installs default Node and Scala CLI/Metals, restores Neovim plugins (including lazy.nvim itself) to the committed lockfile, and installs Mason tools, debug adapters, and configured Treesitter parsers. Existing conflicting paths move to `~/.dotfiles-backups/<timestamp>/` before linking. The final command reports missing dependencies, incorrect links, Java selection, and submodule drift without changing the machine.
 
-The shared default is Java 17. Before installation, a Mac that should default to Java 21 can create its local profile:
+Java selection follows the policy in README.md. Before installation, a Mac can declare its local JDK preferences:
 
 ```sh
 mkdir -p ~/.config/dotdotdot
@@ -501,7 +505,7 @@ The profile and optional `~/.config/dotdotdot/Brewfile.local` are never linked o
 
 Do not update tools automatically during ordinary editor startup. Use this sequence when there is time to verify the result:
 
-1. Run `brew update`, then `brew bundle check --no-upgrade --file Brewfile`; use `brew upgrade <name>` only for tools intentionally being upgraded.
+1. WezTerm uses the nightly cask; update it explicitly with `brew upgrade --cask wezterm@nightly --greedy-latest`. Run `brew update`, then `brew bundle check --no-upgrade --file Brewfile`; use `brew upgrade <name>` only for tools intentionally being upgraded.
 2. In Neovim, run `:Lazy check`, review the candidates, then `:Lazy update`. Review the `nvim/lazy-lock.json` diff.
 3. Run `:MasonToolsUpdate` and `:TSUpdateConfigured` only when language tools/parsers should move.
 4. Restart Neovim, run `:checkhealth`, open a representative project, confirm completion/diagnostics, and run `<leader>rr`.
@@ -593,13 +597,13 @@ Terraform, Kotlin, and debugging were acceptance-tested on macOS arm64 on 2026-0
 - Directory jumping learns local usage.
 - Nested shells do not multiply PATH entries.
 - Node versions switch per project without NVM startup cost.
-- Java project shells use the machine profile's Java default and fall back to Java 17 when no profile exists.
+- Shell JAVA_HOME is machine-owned; Neovim and bootstrap share the validated project/launcher runtime resolver.
 - Conda, Fig, and legacy Ruby initialization are absent.
 - Median warm interactive startup should be at most 500 ms unless a measured, user-valued feature justifies more.
 
 ### Maintenance
 
-- Plugin/tool versions are locked or installed reproducibly.
+- Plugin commits are locked; tool builds and deliberate upgrades are recorded and checked (Homebrew/Mason are not a complete version lock).
 - Updates are deliberate, not automatic on editor startup.
 - The bootstrap process backs up conflicts before linking.
 - Bootstrap can provision a fresh Apple Silicon Mac from Homebrew through editor and language dependencies, and `--check` reports drift afterward.

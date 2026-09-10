@@ -106,7 +106,7 @@ local function autoformat_allowed(bufnr)
 		return find_up(bufnr, { "biome.json", "biome.jsonc" }) ~= nil or has_prettier(bufnr)
 	elseif ft == "markdown" then
 		return has_prettier(bufnr)
-	elseif ft == "c" or ft == "cpp" then
+	elseif vim.tbl_contains({ "c", "cpp", "objc", "objcpp", "cuda" }, ft) then
 		return find_up(bufnr, { ".clang-format", "_clang-format" }) ~= nil
 	elseif ft == "lua" then
 		return find_up(bufnr, { ".stylua.toml", "stylua.toml" }) ~= nil
@@ -177,6 +177,9 @@ return {
 				bash = { "shfmt" },
 				c = { "clang_format" },
 				cpp = { "clang_format" },
+				cuda = { "clang_format" },
+				objc = { "clang_format" },
+				objcpp = { "clang_format" },
 				java = java_formatters,
 				kotlin = { "ktlint" },
 				sql = { "sqlfluff" },

@@ -1,6 +1,7 @@
 local java = require("config.java")
 
 local servers = {
+	lua_ls = {},
 	pyright = {
 		settings = {
 			python = {
@@ -147,6 +148,7 @@ local mason_tools = {
 	"kotlin-debug-adapter",
 	"kotlin-lsp",
 	"ktlint",
+	"lua-language-server",
 	"marksman",
 	"prettier",
 	"pyright",
@@ -281,8 +283,9 @@ return {
 			vim.lsp.config("*", { capabilities = require("blink.cmp").get_lsp_capabilities() })
 			for name, config in pairs(servers) do
 				vim.lsp.config(name, config)
-				vim.lsp.enable(name)
 			end
+
+			require("config.tools").setup(servers)
 
 			vim.api.nvim_create_autocmd("LspAttach", {
 				group = vim.api.nvim_create_augroup("UserLspConfig", { clear = true }),
@@ -296,7 +299,8 @@ return {
 		dependencies = { "saghen/blink.cmp", "mfussenegger/nvim-dap" },
 		config = function()
 			local group = vim.api.nvim_create_augroup("UserJdtls", { clear = true })
-			local function start(args)
+			local start
+			start = function(args)
 				local scala_root = vim.fs.root(args.buf, { "build.sbt", "build.sc", ".scala-build" })
 				if scala_root then
 					return
@@ -320,6 +324,16 @@ return {
 				end
 
 				local mason = vim.fn.stdpath("data") .. "/mason"
+				if vim.fn.executable(mason .. "/bin/jdtls") == 0 then
+					require("config.tools").install({ "jdtls" }, function(ok)
+						if ok and vim.api.nvim_buf_is_valid(args.buf) and vim.bo[args.buf].filetype == "java" then
+							vim.api.nvim_buf_call(args.buf, function()
+								start(args)
+							end)
+						end
+					end)
+					return
+				end
 				local bundles = {}
 				local java_debug = mason .. "/share/java-debug-adapter/com.microsoft.java.debug.plugin.jar"
 				if vim.fn.filereadable(java_debug) == 1 then
@@ -332,7 +346,7 @@ return {
 						"-data",
 						vim.fn.stdpath("cache") .. "/jdtls-workspaces/" .. vim.fn.sha256(root):sub(1, 16),
 					},
-						cmd_env = { JAVA_HOME = java.home(java.default_version()) },
+					cmd_env = { JAVA_HOME = java.launcher().path },
 					root_dir = root,
 					capabilities = require("blink.cmp").get_lsp_capabilities(),
 					init_options = { bundles = bundles },
@@ -374,6 +388,15 @@ return {
 				group = group,
 				pattern = "java",
 				callback = start,
+			})
+			vim.api.nvim_create_autocmd("User", {
+				group = "UserJdtls",
+				pattern = "LanguageToolsRetry",
+				callback = function()
+					if vim.bo.filetype == "java" then
+						start({ buf = vim.api.nvim_get_current_buf() })
+					end
+				end,
 			})
 			if vim.bo.filetype == "java" then
 				start({ buf = vim.api.nvim_get_current_buf() })
@@ -429,13 +452,28 @@ return {
 							},
 						}
 				end
-				require("metals").initialize_or_attach(config)
+				require("config.tools").metals(config.settings.serverVersion, function(ok)
+					if ok and vim.api.nvim_buf_is_valid(args.buf) then
+						vim.api.nvim_buf_call(args.buf, function()
+							require("metals").initialize_or_attach(config)
+						end)
+					end
+				end)
 			end
 
 			vim.api.nvim_create_autocmd("FileType", {
 				group = vim.api.nvim_create_augroup("UserMetals", { clear = true }),
 				pattern = { "scala", "sbt", "java" },
 				callback = start,
+			})
+			vim.api.nvim_create_autocmd("User", {
+				group = "UserMetals",
+				pattern = "LanguageToolsRetry",
+				callback = function()
+					if vim.tbl_contains({ "scala", "sbt", "java" }, vim.bo.filetype) then
+						start({ buf = vim.api.nvim_get_current_buf() })
+					end
+				end,
 			})
 			if vim.tbl_contains({ "scala", "sbt", "java" }, vim.bo.filetype) then
 				start({ buf = vim.api.nvim_get_current_buf() })

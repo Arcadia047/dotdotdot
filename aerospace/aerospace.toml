@@ -48,8 +48,7 @@ alt-shift-j = 'move down'
 alt-shift-k = 'move up'
 alt-shift-l = 'move right'
 
-alt-shift-minus = 'resize smart -50'
-alt-shift-equal = 'resize smart +50'
+alt-r = 'mode resize'
 
 alt-1 = 'workspace 1'
 alt-2 = 'workspace 2'
@@ -74,3 +73,13 @@ alt-shift-9 = 'move-node-to-workspace 9'
 alt-shift-0 = 'move-node-to-workspace 0'
 
 alt-tab = 'workspace-back-and-forth'
+
+# Resize mode: h/l width, k/j height. Escape or Enter returns to normal keys.
+[mode.resize.binding]
+h = 'resize width -50'
+l = 'resize width +50'
+k = 'resize height -50'
+j = 'resize height +50'
+esc = 'mode main'
+enter = 'mode main'
+alt-r = 'mode main'

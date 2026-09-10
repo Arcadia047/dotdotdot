@@ -31,6 +31,9 @@ typeset -g DOTDOTDOT_MACHINE_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/dotdotdot
 if [[ -r "$DOTDOTDOT_MACHINE_CONFIG" ]]; then
   source "$DOTDOTDOT_MACHINE_CONFIG"
 fi
+# Pass legacy typeset-only machine preferences to Neovim as well.
+[[ -n "${DOTDOTDOT_JAVA_VERSION:-}" ]] && export DOTDOTDOT_JAVA_VERSION
+[[ -n "${DOTDOTDOT_JDTLS_JAVA_VERSION:-}" ]] && export DOTDOTDOT_JDTLS_JAVA_VERSION
 
 # Remove retired runtime managers and paths that this module reconstructs.
 # Machine-set JAVA_HOME is respected as-is; the repo never defaults it.

@@ -22,3 +22,6 @@ Icon[^M]
 Network Trash Folder
 Temporary Items
 .apdisk
+
+# Local Python check artifacts
+__pycache__/

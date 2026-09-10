@@ -25,7 +25,9 @@ return {
 			{
 				"<leader>fb",
 				function()
-					require("telescope.builtin").buffers()
+					require("config.navigation").in_editor(function()
+						require("telescope.builtin").buffers()
+					end)
 				end,
 				desc = "Buffers",
 			},
@@ -83,7 +85,16 @@ return {
 					selection_caret = "> ",
 					sorting_strategy = "ascending",
 					layout_config = { prompt_position = "top" },
-					mappings = { i = { ["<Esc>"] = actions.close } },
+					mappings = {
+						i = {
+							["<Esc>"] = actions.close,
+							-- Prompts keep text editing; Esc closes the modal.
+							["<C-h>"] = { "<C-h>", type = "command" },
+							["<C-j>"] = function() end,
+							["<C-k>"] = function() end,
+							["<C-l>"] = function() end,
+						},
+					},
 				},
 				pickers = { find_files = { hidden = true } },
 			}
@@ -119,7 +130,11 @@ return {
 					hide_gitignored = false,
 				},
 			},
-			window = { width = 34 },
+			window = {
+				width = 34,
+				-- Space is the shared leader, including Which-key discovery.
+				mappings = { ["<space>"] = "none" },
+			},
 		},
 	},
 	{
@@ -127,26 +142,111 @@ return {
 		event = "VeryLazy",
 		dependencies = { "nvim-tree/nvim-web-devicons", "catppuccin/nvim" },
 		keys = {
-			{ "[b", "<cmd>BufferLineCyclePrev<cr>", desc = "Previous Buffer" },
-			{ "]b", "<cmd>BufferLineCycleNext<cr>", desc = "Next Buffer" },
-			{ "<leader>bp", "<cmd>BufferLineTogglePin<cr>", desc = "Pin Buffer" },
-			{ "<leader>bc", "<cmd>BufferLineCloseOthers<cr>", desc = "Close Other Buffers" },
-			{ "<leader>bd", "<cmd>confirm bdelete<cr>", desc = "Delete Buffer" },
-			-- Jump to buffer by position, matching Cmd+1..9 (WezTerm) and prefix+1..9 (tmux).
-			{ "<leader>1", "<cmd>BufferLineGoToBuffer 1<cr>", desc = "Buffer 1" },
-			{ "<leader>2", "<cmd>BufferLineGoToBuffer 2<cr>", desc = "Buffer 2" },
-			{ "<leader>3", "<cmd>BufferLineGoToBuffer 3<cr>", desc = "Buffer 3" },
-			{ "<leader>4", "<cmd>BufferLineGoToBuffer 4<cr>", desc = "Buffer 4" },
-			{ "<leader>5", "<cmd>BufferLineGoToBuffer 5<cr>", desc = "Buffer 5" },
-			{ "<leader>6", "<cmd>BufferLineGoToBuffer 6<cr>", desc = "Buffer 6" },
-			{ "<leader>7", "<cmd>BufferLineGoToBuffer 7<cr>", desc = "Buffer 7" },
-			{ "<leader>8", "<cmd>BufferLineGoToBuffer 8<cr>", desc = "Buffer 8" },
-			{ "<leader>9", "<cmd>BufferLineGoToBuffer 9<cr>", desc = "Buffer 9" },
+			{
+				"[b",
+				function()
+					require("config.navigation").buffer("BufferLineCyclePrev")
+				end,
+				desc = "Previous Buffer",
+			},
+			{
+				"]b",
+				function()
+					require("config.navigation").buffer("BufferLineCycleNext")
+				end,
+				desc = "Next Buffer",
+			},
+			{
+				"<leader>bp",
+				function()
+					require("config.navigation").buffer("BufferLineTogglePin")
+				end,
+				desc = "Pin Buffer",
+			},
+			{
+				"<leader>bc",
+				function()
+					require("config.navigation").buffer("BufferLineCloseOthers")
+				end,
+				desc = "Close Other Buffers",
+			},
+			{
+				"<leader>bd",
+				function()
+					require("config.navigation").buffer("confirm bdelete")
+				end,
+				desc = "Close Current Buffer",
+			},
+			-- Visible buffer ordinals match tmux window numbers.
+			{
+				"<leader>1",
+				function()
+					require("config.navigation").buffer_number(1)
+				end,
+				desc = "Buffer 1",
+			},
+			{
+				"<leader>2",
+				function()
+					require("config.navigation").buffer_number(2)
+				end,
+				desc = "Buffer 2",
+			},
+			{
+				"<leader>3",
+				function()
+					require("config.navigation").buffer_number(3)
+				end,
+				desc = "Buffer 3",
+			},
+			{
+				"<leader>4",
+				function()
+					require("config.navigation").buffer_number(4)
+				end,
+				desc = "Buffer 4",
+			},
+			{
+				"<leader>5",
+				function()
+					require("config.navigation").buffer_number(5)
+				end,
+				desc = "Buffer 5",
+			},
+			{
+				"<leader>6",
+				function()
+					require("config.navigation").buffer_number(6)
+				end,
+				desc = "Buffer 6",
+			},
+			{
+				"<leader>7",
+				function()
+					require("config.navigation").buffer_number(7)
+				end,
+				desc = "Buffer 7",
+			},
+			{
+				"<leader>8",
+				function()
+					require("config.navigation").buffer_number(8)
+				end,
+				desc = "Buffer 8",
+			},
+			{
+				"<leader>9",
+				function()
+					require("config.navigation").buffer_number(9)
+				end,
+				desc = "Buffer 9",
+			},
 		},
 		opts = function()
 			return {
 				highlights = require("catppuccin.special.bufferline").get_theme(),
 				options = {
+					numbers = "ordinal",
 					diagnostics = "nvim_lsp",
 					always_show_bufferline = false,
 					separator_style = "thin",
@@ -167,6 +267,7 @@ return {
 				{ "<leader>Dg", group = "Debug Go" },
 				{ "<leader>Dp", group = "Debug Python" },
 				{ "<leader>b", group = "Buffers" },
+				{ "<leader>bd", desc = "Close Current Buffer" },
 				{ "<leader>c", group = "Code" },
 				{ "<leader>d", group = "Database" },
 				{ "<leader>f", group = "Find" },
@@ -176,6 +277,7 @@ return {
 				{ "<leader>s", group = "Session" },
 				{ "<leader>u", group = "UI" },
 				{ "<leader>v", group = "Vim Training" },
+				{ "<leader>w", group = "Windows" },
 				{ "<leader>x", group = "Diagnostics" },
 			})
 		end,
@@ -268,10 +370,6 @@ return {
 			backend = { "telescope" },
 			diff = { algorithm = "patience", ignore_whitespace = true },
 		},
-	},
-	{
-		"christoomey/vim-tmux-navigator",
-		lazy = false,
 	},
 	{
 		"lewis6991/gitsigns.nvim",

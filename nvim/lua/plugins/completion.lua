@@ -48,6 +48,7 @@ return {
 			signature = { enabled = true },
 			keymap = {
 				preset = "default",
+				["<C-k>"] = false, -- Reserved for tmux task switching; signature help opens automatically.
 				["<Tab>"] = { "select_next", "snippet_forward", "fallback" },
 				["<S-Tab>"] = { "select_prev", "snippet_backward", "fallback" },
 				["<CR>"] = { "accept", "fallback" },

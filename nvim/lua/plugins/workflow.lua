@@ -16,7 +16,19 @@ return {
 		},
 		opts = {
 			strategy = { "terminal", direction = "bottom", auto_scroll = true, quit_on_exit = "never" },
-			task_list = { direction = "bottom", min_height = 8, max_height = 20 },
+			task_list = {
+				direction = "bottom",
+				min_height = 8,
+				max_height = 20,
+				keymaps = {
+					["<C-j>"] = false,
+					["<C-k>"] = false,
+					["<C-u>"] = "keymap.scroll_output_up",
+					["<C-d>"] = "keymap.scroll_output_down",
+					["<C-n>"] = "keymap.next_task",
+					["<C-p>"] = "keymap.prev_task",
+				},
+			},
 		},
 	},
 	{

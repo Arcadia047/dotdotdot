@@ -5,6 +5,7 @@ fi
 
 typeset -g _DOTDOTDOT_REPO_ROOT="${${(%):-%x}:A:h}"
 source "$_DOTDOTDOT_REPO_ROOT/zsh/env.zsh"
+source "$_DOTDOTDOT_REPO_ROOT/zsh/theme.zsh"
 unset _DOTDOTDOT_REPO_ROOT
 
 typeset -U path PATH fpath FPATH
@@ -186,32 +187,6 @@ alias lg='lazygit'
 alias ..='cd ..'
 alias ...='cd ../..'
 alias ....='cd ../../..'
-
-# theme [dark|light] — switch the Catppuccin palette across WezTerm, tmux, and
-# Neovim. The repo's theme.conf (installed as ~/.config/dotfiles-theme) is the
-# single source of truth; running Neovim instances pick it up on next start.
-theme() {
-  local file="$HOME/.config/dotfiles-theme"
-  if (( $# == 0 )); then
-    cat "$file" 2>/dev/null || print dark
-    return 0
-  fi
-  case "$1" in
-    dark|light) ;;
-    *) print -u2 "usage: theme [dark|light]"; return 1 ;;
-  esac
-  mkdir -p "$HOME/.config"
-  print -r -- "$1" > "$file"
-  # WezTerm hot-reloads its config on mtime change; touch to trigger it.
-  touch "$HOME/.config/wezterm/wezterm.lua"
-  # tmux: refresh config and status bar in place (never restarts the server).
-  if [[ -n "$TMUX" ]] && (( $+commands[tmux] )); then
-    tmux set-environment -g DOTFILES_THEME "$1"
-    tmux source-file "$HOME/.tmux.conf" >/dev/null 2>&1
-    tmux refresh-client -S >/dev/null 2>&1
-  fi
-  print "theme set to $1"
-}
 
 [[ -r "${HOMEBREW_PREFIX:-/opt/homebrew}/share/powerlevel10k/powerlevel10k.zsh-theme" ]] \
   && source "${HOMEBREW_PREFIX:-/opt/homebrew}/share/powerlevel10k/powerlevel10k.zsh-theme"

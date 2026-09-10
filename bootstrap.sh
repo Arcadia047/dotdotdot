@@ -12,6 +12,7 @@ dry_run=0
 install_tools=0
 check_only=0
 check_failures=0
+check_warnings=0
 
 usage() {
   cat <<'EOF'
@@ -35,8 +36,8 @@ Machine preferences are read from ~/.config/dotdotdot/machine.zsh.
 Copy zsh/machine.example.zsh there to override the default Java version or PATH.
 The optional ~/.config/dotdotdot/Brewfile.local can declare machine-only packages.
 Neither local file is created, linked, or overwritten by bootstrap.
-The shared theme (dark or light Catppuccin) is set once in theme.conf and
-applied to WezTerm, tmux, and Neovim; switch at runtime with `theme light|dark`.
+The tracked theme.conf seeds machine-local ~/.config/dotfiles-theme.
+Switch WezTerm, tmux, and Neovim together with `theme light|dark`.
 EOF
 }
 
@@ -128,6 +129,9 @@ configure_homebrew() {
 }
 
 install_brew_bundles() {
+  if "$brew_bin" list --cask wezterm >/dev/null 2>&1; then
+    die "Stable WezTerm conflicts with nightly. Run ./scripts/use-wezterm-nightly first."
+  fi
   run "$brew_bin" tap hashicorp/tap
   run "$brew_bin" trust --formula hashicorp/tap/terraform
   run env HOMEBREW_NO_AUTO_UPDATE=1 "$brew_bin" bundle --no-upgrade --file "$repo_root/Brewfile"
@@ -233,76 +237,55 @@ link_dotfiles() {
   link_item "$repo_root/.zprofile" "$HOME/.zprofile"
   link_item "$repo_root/.zshrc" "$HOME/.zshrc"
   link_item "$repo_root/.p10k.zsh" "$HOME/.p10k.zsh"
-  # Single theme source of truth, read by WezTerm, tmux, and Neovim.
-  link_item "$repo_root/theme.conf" "$HOME/.config/dotfiles-theme"
+  initialize_theme
 }
 
-resolve_java_version() {
-  local version=""
-  if [[ -r "$machine_config" ]]; then
-    version="$(/bin/zsh -dfc 'source "$1" >/dev/null 2>&1; print -r -- "${DOTDOTDOT_JAVA_VERSION:-${JAVA_HOME##*openjdk@}}"' dotdotdot "$machine_config")"
+initialize_theme() {
+  local file="${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles-theme"
+  local mode
+  if [[ -r "$file" ]]; then
+    mode="$(cat "$file")"
+  else
+    mode="$(cat "$repo_root/theme.conf")"
   fi
-  version="${version%%/*}"
-  if [[ ! "$version" =~ ^[0-9]+$ ]]; then
-    # No machine preference: default to the newest Homebrew OpenJDK present.
-    local dir candidate release newest=0
-    for dir in "${HOMEBREW_PREFIX:-/opt/homebrew}"/opt/openjdk@*/ "${HOMEBREW_PREFIX:-/opt/homebrew}"/opt/openjdk/; do
-      [[ -d "$dir/libexec/openjdk.jdk/Contents/Home" ]] || continue
-      candidate="${dir%/}"
-      candidate="${candidate##*openjdk@}"
-      if [[ ! "$candidate" =~ ^[0-9]+$ ]]; then
-        release="$dir/libexec/openjdk.jdk/Contents/Home/release"
-        [[ -r "$release" ]] && candidate="$(sed -n 's/^JAVA_VERSION="\([0-9]*\).*/\1/p' "$release" | head -1)"
-      fi
-      if [[ "$candidate" =~ ^[0-9]+$ ]] && ((candidate > newest)); then
-        newest="$candidate"
-      fi
-    done
-    ((newest > 0)) && version="$newest"
+  [[ "$mode" == dark || "$mode" == light ]] || die "Invalid theme in $file; expected dark or light."
+  if [[ -f "$file" && ! -L "$file" ]]; then
+    log "Already initialized: $file ($mode)"
+    return
   fi
-  [[ "$version" =~ ^[0-9]+$ ]] || version="17"
-  printf '%s\n' "$version"
+  if [[ -e "$file" || -L "$file" ]]; then
+    backup_item "$file"
+  fi
+  run mkdir -p "$(dirname "$file")"
+  if ((dry_run)); then
+    log "[dry-run] initialize machine-local theme $file ($mode)"
+  else
+    printf '%s\n' "$mode" >"$file"
+  fi
 }
 
-# An existing JDK home for the given version: the versioned keg, then the
-# unversioned keg (installed as a dependency of maven/kotlin), then a
-# machine-declared JAVA_HOME. Fails when none exists.
-find_java_home() {
-  local version="$1"
-  local prefix="${HOMEBREW_PREFIX:-/opt/homebrew}"
-  local home="$prefix/opt/openjdk@${version}/libexec/openjdk.jdk/Contents/Home"
-  if [[ -x "$home/bin/java" ]]; then
-    printf '%s\n' "$home"
-    return 0
-  fi
-  home="$prefix/opt/openjdk/libexec/openjdk.jdk/Contents/Home"
-  if [[ -x "$home/bin/java" ]]; then
-    printf '%s\n' "$home"
-    return 0
-  fi
-  if [[ -r "$machine_config" ]]; then
-    home="$(/bin/zsh -dfc 'source "$1" >/dev/null 2>&1; print -r -- "${JAVA_HOME:-}"' dotdotdot "$machine_config")"
-    if [[ -x "$home/bin/java" ]]; then
-      printf '%s\n' "$home"
-      return 0
-    fi
-  fi
-  return 1
+# Use exactly Neovim's resolver, with the same machine profile. No plugins,
+# interactive shell startup, runtime installation, or project code is loaded.
+java_runtime() {
+  local nvim_bin
+  nvim_bin="$(command -v nvim)" || return 1
+  /bin/zsh -dfc '
+    if [[ -r "$1" ]]; then source "$1" >/dev/null; fi
+    export DOTDOTDOT_JAVA_VERSION DOTDOTDOT_JDTLS_JAVA_VERSION JAVA_HOME
+    exec "$2" --headless -u NONE -i NONE -n -l "$3" "$4"
+  ' dotdotdot "$machine_config" "$nvim_bin" "$repo_root/scripts/java-runtime.lua" "$1"
 }
 
 configure_runtime_environment() {
-  local java_version java_home
-  java_version="$(resolve_java_version)"
-  if java_home="$(find_java_home "$java_version")"; then
-    export JAVA_HOME="$java_home"
+  local java_home
+  if ((dry_run)); then
+    log "[dry-run] resolve installed Java after Homebrew provisioning"
   else
-    # Nominal path for dry runs; real runs require an installed JDK.
-    export JAVA_HOME="${HOMEBREW_PREFIX:-/opt/homebrew}/opt/openjdk@${java_version}/libexec/openjdk.jdk/Contents/Home"
-    if ((!dry_run)); then
-      die "No usable JDK for Java $java_version. Install one with brew, or set JAVA_HOME in $machine_config."
-    fi
+    java_home="$(java_runtime project)" || die "Java resolution failed; check $machine_config."
+    export JAVA_HOME="$java_home"
+    export PATH="$JAVA_HOME/bin:$PATH"
   fi
-  export PATH="$JAVA_HOME/bin:$HOME/Library/Application Support/Coursier/bin:$HOME/.local/share/nvim/mason/bin:$HOMEBREW_PREFIX/opt/libpq/bin:$PATH"
+  export PATH="$HOME/Library/Application Support/Coursier/bin:$HOME/.local/share/nvim/mason/bin:$HOMEBREW_PREFIX/opt/libpq/bin:$PATH"
 }
 
 install_runtime_tools() {
@@ -374,25 +357,44 @@ check_link() {
 }
 
 check_submodules() {
-  local status
+  local status dirty
   if ! status="$(git -C "$repo_root" submodule status --recursive 2>/dev/null)"; then
     check_bad "tmux submodule metadata"
     return
   fi
-  if printf '%s\n' "$status" | grep -Eq '^[-+]'; then
-    check_bad "tmux submodules are uninitialized or not at their pinned revisions"
+  if printf '%s\n' "$status" | grep -Eq '^[-+U]'; then
+    check_bad "tmux submodules are uninitialized, conflicted, or not at their pinned revisions"
   else
-    check_ok "tmux submodules"
+    check_ok "tmux submodule revisions"
+  fi
+  # The foreach body is evaluated by Git in each submodule.
+  # shellcheck disable=SC2016
+  dirty="$(git -C "$repo_root" submodule foreach --quiet --recursive 'test -z "$(git status --porcelain)" || printf "%s\n" "$displaypath"')" || {
+    check_bad "tmux submodule worktree inspection"
+    return
+  }
+  if [[ -n "$dirty" ]]; then
+    log "WARN: local changes in tmux submodules (preserved):"
+    log "$dirty"
+    check_warnings=$((check_warnings + 1))
   fi
 }
 
 check_java() {
-  local java_version java_home
-  java_version="$(resolve_java_version)"
-  if java_home="$(find_java_home "$java_version")"; then
-    check_ok "Java $java_version ($java_home)"
+  local details
+  if details="$(java_runtime check 2>&1)"; then
+    check_ok "$details"
   else
-    check_bad "Java $java_version runtime (none installed and no JAVA_HOME in $machine_config)"
+    check_bad "Java runtime selection: $details"
+  fi
+}
+
+check_theme() {
+  local file="${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles-theme"
+  if [[ -f "$file" && ! -L "$file" ]] && [[ "$(cat "$file")" == dark || "$(cat "$file")" == light ]]; then
+    check_ok "machine-local theme ($file)"
+  else
+    check_bad "machine-local theme ($file); run bootstrap to initialize or migrate the old symlink"
   fi
 }
 
@@ -447,7 +449,7 @@ check_installation() {
   check_link "$repo_root/.zprofile" "$HOME/.zprofile"
   check_link "$repo_root/.zshrc" "$HOME/.zshrc"
   check_link "$repo_root/.p10k.zsh" "$HOME/.p10k.zsh"
-  check_link "$repo_root/theme.conf" "$HOME/.config/dotfiles-theme"
+  check_theme
 
   check_submodules
   check_java
@@ -476,7 +478,7 @@ check_installation() {
   if ((check_failures > 0)); then
     die "$check_failures installation check(s) failed."
   fi
-  log "All installation checks passed."
+  log "Installation checks passed ($check_warnings warning(s))."
 }
 
 main() {
@@ -535,10 +537,12 @@ main() {
     log "Backups stored in: $backup_root"
   fi
   if [[ ! -r "$machine_config" ]]; then
-    log "No machine profile; Java follows the newest Homebrew OpenJDK installed. Copy zsh/machine.example.zsh to $machine_config to customize this Mac."
+    log "No machine profile; editor Java follows JAVA_HOME or the newest installed JDK. jdtls needs Java 21+. Copy zsh/machine.example.zsh to $machine_config to customize."
   fi
 
   log "Bootstrap complete. Run ./bootstrap.sh --check to verify the machine."
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

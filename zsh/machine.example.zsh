@@ -1,17 +1,17 @@
-# Copy this file to ~/.config/dotdotdot/machine.zsh and change only
-# preferences that should differ on this Mac. Bootstrap never overwrites it.
-# The repo's shared config intentionally sets no machine-preference env vars,
-# so nothing here is forced on machines that don't create this file.
+# Copy to ~/.config/dotdotdot/machine.zsh. Bootstrap never overwrites it.
+# JDKs are identified by their release files, including custom JAVA_HOME paths
+# and Homebrew's unversioned openjdk keg. Missing explicit choices are errors.
 
-# Default JVM for this Mac's Neovim (jdtls). Any Homebrew openjdk@<major> works;
-# Neovim defaults to the newest one installed when this is unset.
-# typeset -g DOTDOTDOT_JAVA_VERSION=25
+# Optional project/standalone Java default in Neovim. Otherwise JAVA_HOME wins,
+# then the newest installed JDK. Project Maven/Gradle toolchains remain in charge.
+# export DOTDOTDOT_JAVA_VERSION=17
 
-# Export JAVA_HOME only if this Mac should default to a specific JVM in every
-# shell. The repo never defaults it. Example (Homebrew OpenJDK 21):
-# export JAVA_HOME="${HOMEBREW_PREFIX:-/opt/homebrew}/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"
+# Independent Java 21+ runtime for jdtls (defaults to newest installed).
+# export DOTDOTDOT_JDTLS_JAVA_VERSION=25
+
+# Set only if every shell on this Mac should use a particular JDK.
+# export JAVA_HOME="${HOMEBREW_PREFIX:-/opt/homebrew}/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"
 
 # Extra PATH entries are added only when the directory exists.
-# Do not assign PATH directly here.
 typeset -ga DOTDOTDOT_PATH_PREPEND=()
 typeset -ga DOTDOTDOT_PATH_APPEND=()

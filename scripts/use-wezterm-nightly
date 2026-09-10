@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export HOMEBREW_NO_AUTO_UPDATE=1
+if brew list --cask wezterm@nightly >/dev/null 2>&1; then
+  wezterm --version
+  exit 0
+fi
+# Complete the download before replacing the stable app. Keep application
+# preferences and running sessions; never use --zap or terminate processes.
+brew fetch --cask wezterm@nightly
+had_stable=0
+if brew list --cask wezterm >/dev/null 2>&1; then
+  had_stable=1
+  brew uninstall --cask wezterm
+fi
+if ! brew install --cask wezterm@nightly; then
+  if ((had_stable)); then
+    printf '%s\n' 'Nightly installation failed; restoring the stable cask.' >&2
+    brew install --cask wezterm
+  fi
+  exit 1
+fi
+wezterm --version
+printf '%s\n' 'Nightly installed. Existing WezTerm processes keep their old executable until relaunched.'

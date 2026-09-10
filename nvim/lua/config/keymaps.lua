@@ -1,17 +1,7 @@
 local map = vim.keymap.set
 
 map("n", "<Esc>", "<cmd>nohlsearch<cr>", { desc = "Clear Search Highlight" })
-map("n", "<leader><Tab>", "<C-^>", { desc = "Alternate Buffer" })
-
--- Universal navigation model (see KEYBINDINGS.md): Shift+Left/Right moves to
--- the previous/next buffer, matching WezTerm tabs and tmux windows.
-map("n", "<S-Left>", "<cmd>bprevious<cr>", { desc = "Previous Buffer" })
-map("n", "<S-Right>", "<cmd>bnext<cr>", { desc = "Next Buffer" })
-
--- Splits match tmux: | vertical, - horizontal.
-map("n", "<leader>|", "<cmd>vsplit<cr>", { desc = "Split Right" })
-map("n", "<leader>-", "<cmd>split<cr>", { desc = "Split Below" })
-map("n", "<leader><Tab>", "<C-^>", { desc = "Alternate Buffer" })
+require("config.navigation").setup()
 
 map("n", "<leader>cd", vim.diagnostic.open_float, { desc = "Line Diagnostics" })
 map("n", "]d", function()

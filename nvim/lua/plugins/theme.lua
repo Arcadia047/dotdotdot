@@ -1,22 +1,5 @@
--- The single source of truth is the repo's theme.conf (installed by bootstrap as
--- ~/.config/dotfiles-theme and shared with WezTerm and tmux). WezTerm's
--- DOTFILES_THEME env var is a secondary fallback; "dark" is the final default.
-local function resolve_theme_mode()
-	local ok, lines = pcall(vim.fn.readfile, vim.fn.expand("~/.config/dotfiles-theme"))
-	if ok and lines and #lines > 0 and lines[1]:match("^%s*light%s*$") then
-		return "light"
-	end
-	if vim.env.DOTFILES_THEME == "light" then
-		return "light"
-	end
-	return "dark"
-end
-
-local theme_mode = resolve_theme_mode()
-local flavors = {
-	dark = "macchiato",
-	light = "latte",
-}
+local theme = require("config.theme")
+local theme_mode = theme.mode()
 
 return {
 	{
@@ -25,7 +8,7 @@ return {
 		lazy = false,
 		priority = 1000,
 		opts = {
-			flavour = flavors[theme_mode],
+			flavour = theme.flavor(theme_mode),
 			background = {
 				light = "latte",
 				dark = "macchiato",
@@ -48,7 +31,18 @@ return {
 		config = function(_, opts)
 			vim.o.background = theme_mode
 			require("catppuccin").setup(opts)
-			vim.cmd.colorscheme("catppuccin-" .. flavors[theme_mode])
+			vim.cmd.colorscheme("catppuccin-" .. theme.flavor(theme_mode))
+			vim.api.nvim_create_autocmd("FocusGained", {
+				group = vim.api.nvim_create_augroup("UserTheme", { clear = true }),
+				callback = function()
+					local mode = theme.mode()
+					if mode ~= theme_mode then
+						theme_mode = mode
+						vim.o.background = mode
+						vim.cmd.colorscheme("catppuccin-" .. theme.flavor(mode))
+					end
+				end,
+			})
 		end,
 	},
 }
