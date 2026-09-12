@@ -75,7 +75,7 @@ zoom are infrequent operations available through the WezTerm command palette
 | Overseer `Ctrl-j/k` output scroll | tmux task switching | `Ctrl-u/d` scroll output; `Ctrl-n/p` select tasks |
 | Telescope floating prompt | Ctrl-j/k switches tmux tasks; Ctrl-h remains backspace | `Ctrl-n/p` selects; `Ctrl-u/d` scrolls preview; `Esc` closes before file cycling |
 | Other floating editor inputs | Keep insert-mode text input | Dismiss with Esc for file cycling; Ctrl-j/k still switches tasks |
-| tmux copy mode | Ctrl-j/k and Shift-arrows switch tasks | `q` exits copy mode; `v` selects, `y` copies |
+| tmux copy mode | Ctrl-j/k and Shift-arrows switch tasks | `q` exits copy mode; `v` selects; `y` or Enter copies and exits |
 | Shell fzf | tmux owns Ctrl-j/k | `Ctrl-n/p` selects; Esc/Ctrl-c dismisses |
 | SSH / mosh | Ctrl-j/k switches local tmux tasks; Ctrl-h/l reaches the remote editor | Remote buffer shortcuts require the same Neovim config; use the remote tmux prefix for remote tasks |
 | Nested remote tmux with Ctrl-a prefix | First prefix belongs to local tmux | `Ctrl-a Ctrl-a` sends prefix to remote; then remote command |
@@ -86,6 +86,18 @@ font size, `Cmd-H/M` hide/minimize, and Option-Left/Right shell word motion.
 Ctrl-l into Neovim. Ctrl-T remains available for the shell fzf file picker.
 WezTerm search/copy/palette overlays are modal host utilities; Escape closes them
 before returning to terminal navigation.
+
+## Mouse selection and clipboard
+
+In terminal output, drag to select text, release the mouse, then press **y**
+(or Enter). tmux copies the selection to the terminal clipboard and exits copy
+mode, so **Cmd-V** can paste immediately. Mouse release alone keeps the selection
+visible. Fast drags include the release position, even when the last motion event
+arrived earlier. Reverse, multiline, and rectangular selections are supported.
+
+For keyboard selection, use `Ctrl-a [` to enter copy mode, `v` to start selecting,
+then `y` to copy and return to the application. `q` cancels without copying.
+Neovim keeps its own mouse selection and yank behavior.
 
 ## Shell suggestions and completion
 
@@ -132,3 +144,8 @@ key whitelist and the remaining configuration contracts.
 `python3 tests/shell_completion.py` checks real Tab input with installed zsh
 plugins and disposable history: suggestion acceptance, prompt rebinding, Ctrl-F,
 filename completion, and fuzzy-menu selection. It does not touch live shells.
+
+`python3 tests/clipboard.py` checks real mouse/key input and both the tmux paste
+buffer and outgoing OSC 52 clipboard messages in a private PTY. It covers fast,
+reverse, multiline, rectangular, repeated, and keyboard selection plus immediate
+paste. It never reads or changes the real macOS clipboard.

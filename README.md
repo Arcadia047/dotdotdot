@@ -51,6 +51,18 @@ python3 tests/navigation.py
 
 It sends real key bytes through a PTY attached to a private tmux server and the full editor configuration, with temporary editor state. This exercises key dispatch rather than calling navigation commands directly. It does not test macOS hardware event delivery or a remote SSH server.
 
+## Terminal copying
+
+Mouse-drag terminal output, release, then press `y` or Enter to copy and exit
+tmux copy mode. `Cmd-V` then pastes into the application. `.tmux/copy.conf`
+refreshes the selected range at mouse release; otherwise a fast drag can copy
+only the first one or two characters. It preserves rectangular selection too.
+
+`python3 tests/clipboard.py` verifies seven cases through a private tmux PTY and
+captures OSC 52 clipboard messages without touching the system clipboard. The
+old configuration reproduced a two-character copy; the fixed configuration
+passes fast, reverse, multiline, rectangle, keyboard, and immediate-paste checks.
+
 ## Shell completion
 
 Tab inserts a visible grey autosuggestion without executing it. With no visible
