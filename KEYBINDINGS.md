@@ -87,6 +87,20 @@ Ctrl-l into Neovim. Ctrl-T remains available for the shell fzf file picker.
 WezTerm search/copy/palette overlays are modal host utilities; Escape closes them
 before returning to terminal navigation.
 
+## Shell suggestions and completion
+
+| Key / context | Action |
+| --- | --- |
+| `Tab` with a grey suggestion | Insert the complete suggestion; Enter still runs the command |
+| `Tab` without a suggestion | Complete the current word, opening the fuzzy menu when there are multiple matches |
+| `Ctrl-F` / Right arrow at the end of the line | Accept the grey suggestion |
+| `Ctrl-n/p`, then Enter in the completion menu | Select a candidate and insert it into the command line |
+| `Esc` in the completion menu | Cancel the menu |
+| `Ctrl-T` / `Ctrl-R` | Search files / command history |
+
+Already-open shells need `source ~/.zshrc` after a shell configuration change.
+New tmux windows load it automatically.
+
 ## Neovim workflow shortcuts
 
 | Key | Action |
@@ -114,3 +128,7 @@ cycling without splits, unsaved edits, Neo-tree, modal escape, embedded terminal
 copy mode, and task switching. Optional editor focus remains tested.
 It never attaches to an existing tmux session. `./scripts/check` covers the host
 key whitelist and the remaining configuration contracts.
+
+`python3 tests/shell_completion.py` checks real Tab input with installed zsh
+plugins and disposable history: suggestion acceptance, prompt rebinding, Ctrl-F,
+filename completion, and fuzzy-menu selection. It does not touch live shells.

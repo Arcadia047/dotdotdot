@@ -123,7 +123,6 @@ if [[ -r "${HOMEBREW_PREFIX:-/opt/homebrew}/share/zsh-autosuggestions/zsh-autosu
 
   # Tab accepts the grey suggestion when one is visible; otherwise it opens the
   # fzf fuzzy completion menu. Ctrl-F also accepts the visible suggestion.
-  # back to normal completion. Ctrl-F still accepts word-by-word.
   accept-suggestion-or-complete() {
     if [[ -n "${POSTDISPLAY:-}" ]]; then
       zle autosuggest-accept
@@ -133,6 +132,9 @@ if [[ -r "${HOMEBREW_PREFIX:-/opt/homebrew}/share/zsh-autosuggestions/zsh-autosu
       zle expand-or-complete
     fi
   }
+  # This widget reads POSTDISPLAY itself. Autosuggestions must not wrap it as
+  # an editing widget, because that wrapper clears POSTDISPLAY before calling us.
+  ZSH_AUTOSUGGEST_IGNORE_WIDGETS+=(accept-suggestion-or-complete)
   zle -N accept-suggestion-or-complete
   bindkey '^I' accept-suggestion-or-complete
 fi

@@ -51,6 +51,17 @@ python3 tests/navigation.py
 
 It sends real key bytes through a PTY attached to a private tmux server and the full editor configuration, with temporary editor state. This exercises key dispatch rather than calling navigation commands directly. It does not test macOS hardware event delivery or a remote SSH server.
 
+## Shell completion
+
+Tab inserts a visible grey autosuggestion without executing it. With no visible
+suggestion, Tab uses normal fuzzy completion. Ctrl-F remains an acceptance alias.
+The custom Tab widget is excluded from zsh-autosuggestions wrapping so it can
+read the suggestion before the plugin clears it.
+
+Run `python3 tests/shell_completion.py` for actual-key acceptance with installed
+shell plugins and disposable history. After updating shell settings, run
+`source ~/.zshrc` in existing shells or open a new tmux window.
+
 ## Java policy
 
 One resolver (`nvim/lua/config/java.lua`) serves Neovim and bootstrap. It reads executable JDK homes and their `release` metadata, preserves custom/unversioned paths, and rejects missing explicit choices.
