@@ -30,18 +30,25 @@ def main():
         root = Path(directory)
         for name in ('alpha-fixture.txt', 'beta-fixture.txt'):
             (root / name).touch()
+        (root / 'gamma-fixture-dir').mkdir()
         (root / '.zshrc').write_text('''
 POWERLEVEL9K_DISABLE_CONFIGURATION_WIZARD=true
 POWERLEVEL9K_LEFT_PROMPT_ELEMENTS=(prompt_char)
 POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=()
 source "$DOTDOTDOT_TEST_REPO/.zshrc"
 print -s -- 'echo suggestion-accepted'
+print -s -- 'cd gamma-fixture-dir/deeper/place'
 _dotdotdot_test_capture() {
   print -rl -- "$BUFFER" "$POSTDISPLAY" "$CURSOR" > "$HOME/snapshot"
+}
+_dotdotdot_test_pwd() {
+  print -r -- "$PWD" > "$HOME/pwd"
 }
 ZSH_AUTOSUGGEST_IGNORE_WIDGETS+=(_dotdotdot_test_capture)
 zle -N _dotdotdot_test_capture
 bindkey '^X^S' _dotdotdot_test_capture
+zle -N _dotdotdot_test_pwd
+bindkey '^X^P' _dotdotdot_test_pwd
 bindkey '^Xv' autosuggest-disable
 bindkey '^Xe' autosuggest-enable
 ''')
@@ -88,6 +95,15 @@ bindkey '^Xe' autosuggest-enable
                 pump(0.1)
             raise AssertionError(description)
 
+        def pwd_snapshot():
+            file = root / 'pwd'
+            file.unlink(missing_ok=True)
+            send(b'\x18\x10')
+            deadline = time.monotonic() + 2
+            while not file.exists() and time.monotonic() < deadline:
+                pump(0.05)
+            return file.read_text().strip() if file.exists() else None
+
         def expect_buffer(expected, description):
             actual = snapshot()
             assert actual and actual[0].rstrip() == expected, f'{description}: {actual!r}'
@@ -130,6 +146,20 @@ bindkey '^Xe' autosuggest-enable
             suggestion()
             send(b'\t')
             expect_buffer('echo suggestion-accepted', 'Suggestion acceptance works again after using the completion menu')
+            send(b'\x15cd gamma-fix')
+            wait_for(lambda: snapshot()[:2] == ['cd gamma-fix', 'ture-dir/'],
+                     'The local directory prefix must outrank the seeded history entry')
+            print('PASS The local directory prefix outranks history from another directory', flush=True)
+            send(b'\r')
+            root_path = str(root.resolve())
+            wait_for(lambda: pwd_snapshot() == root_path + '/gamma-fixture-dir',
+                     'The typed prefix must land in the current directory')
+            print('PASS cd uses the current directory prefix before zoxide', flush=True)
+            send(b'\x15cd gamma-nowhere\r')
+            pump(0.5)
+            assert pwd_snapshot() == root_path + '/gamma-fixture-dir', \
+                'A prefix that matches nothing locally must not leave the fixture directory'
+            print('PASS cd still falls back when nothing local matches', flush=True)
             send(b'\x15source "$DOTDOTDOT_TEST_REPO/.zshrc"\r')
             pump(0.5)
             suggestion()
@@ -139,7 +169,7 @@ bindkey '^Xe' autosuggest-enable
             os.kill(pid, signal.SIGHUP)
             os.close(master)
             os.waitpid(pid, 0)
-    print('All 7 shell completion checks passed.')
+    print('All 10 shell completion checks passed.')
 
 
 if __name__ == '__main__':

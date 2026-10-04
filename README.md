@@ -70,6 +70,11 @@ suggestion, Tab uses normal fuzzy completion. Ctrl-F remains an acceptance alias
 The custom Tab widget is excluded from zsh-autosuggestions wrapping so it can
 read the suggestion before the plugin clears it.
 
+`cd` and the grey suggestion both prefer the current directory. An exact
+directory name, or a unique name prefix such as `projects` for `./projects`,
+wins over a history entry or a zoxide match recorded in another directory;
+zoxide answers only when nothing local matches.
+
 Run `python3 tests/shell_completion.py` for actual-key acceptance with installed
 shell plugins and disposable history. After updating shell settings, run
 `source ~/.zshrc` in existing shells or open a new tmux window.

@@ -474,7 +474,7 @@ Press `<Space>` and pause whenever a mapping is forgotten; Which-key shows the a
 - `Ctrl-R` searches local history, `Ctrl-T` inserts a file, and `Alt-C` changes to a selected directory.
 - Up/Down searches history using the text already typed.
 - `Ctrl-F` accepts a full local suggestion; `Alt-F` advances by a word.
-- `cd` learns frequently used directories through zoxide. Use `cdi` for an interactive learned-directory picker.
+- `cd` learns frequently used directories through zoxide. Use `cdi` for an interactive learned-directory picker. A directory name in the current directory — exact or a unique prefix — wins over the learned match, and the grey suggestion prefers it over history from another directory.
 - Node changes automatically when an ancestor contains `.node-version` or `.nvmrc`; `fnm use <version>` handles an explicit switch.
 
 ## Maintenance, local state, and rollback

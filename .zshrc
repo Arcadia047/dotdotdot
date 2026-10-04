@@ -116,7 +116,33 @@ fi
 
 # Lightweight, non-AI suggestions; Ctrl-F accepts the visible suggestion.
 if [[ -r "${HOMEBREW_PREFIX:-/opt/homebrew}/share/zsh-autosuggestions/zsh-autosuggestions.zsh" ]]; then
-  ZSH_AUTOSUGGEST_STRATEGY=(history completion)
+  # Suggest this directory's own entries before anything remembered from a
+  # different one: typing `cd proj` inside ~/projects/omscs must offer
+  # ./projects, never a history line or learned zoxide match for ~/projects.
+  # The history and completion strategies still answer whenever the last word
+  # is not a plain directory prefix here.
+  _zsh_autosuggest_strategy_directory_prefix() {
+    emulate -L zsh
+    local word="${1##* }"
+    [[ -n "$word" && "$word" != */* && "$word" != "~"* ]] || return 0
+    local -a matches
+    local entry
+    for entry in *(N/); do
+      [[ "$entry" == "$word"* ]] && matches+=("$entry")
+    done
+    (( $#matches )) || return 0
+    local common="${matches[1]}"
+    for entry in "${matches[@]}"; do
+      while [[ "$entry" != "$common"* ]]; do common="${common%?}"; done
+    done
+    local rest="${common#$word}"
+    # `cs7` for cs7295/cs7641 truncates to a prefix that is not a directory,
+    # so hand the word back to the other strategies instead of guessing.
+    [[ -n "$rest" || -d "$common" ]] || return 0
+    typeset -g suggestion="${1}${rest}/"
+  }
+
+  ZSH_AUTOSUGGEST_STRATEGY=(directory_prefix history completion)
   ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=40
   source "${HOMEBREW_PREFIX:-/opt/homebrew}/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
   bindkey '^F' autosuggest-accept
@@ -178,6 +204,29 @@ fi
 # Project-local environment variables and fast directory jumping.
 (( $+commands[direnv] )) && eval "$(direnv hook zsh)"
 (( $+commands[zoxide] )) && eval "$(zoxide init zsh --cmd cd)"
+
+# zoxide resolves `cd <name>` anywhere on the machine by frecency. Prefer the
+# current directory first: when <name> is a plain directory name here, exactly
+# or as a unique prefix, walk into it, and only ask the learned database when
+# nothing local matches. Exact paths, `cd -`, `cd +2`, `cd -- target`, and
+# multi-argument forms keep zoxide's behavior.
+if (( $+commands[zoxide] )); then
+  cd() {
+    if (( $# == 1 )) && [[ -n "$1" && "$1" != [-+]<-> && "$1" != -* && "$1" != */* && "$1" != "~"* ]] \
+      && [[ ! -d "$1" ]]; then
+      local -a local_directories
+      local entry
+      for entry in *(N/); do
+        [[ "$entry" == "$1"* ]] && local_directories+=("$entry")
+      done
+      if (( $#local_directories == 1 )); then
+        __zoxide_cd "$local_directories[1]"
+        return
+      fi
+    fi
+    __zoxide_z "$@"
+  }
+fi
 
 # Keep machine-specific environment variables and secrets outside this repo.
 typeset -g ZSH_LOCAL_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/zsh/local.zsh"
