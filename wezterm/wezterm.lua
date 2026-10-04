@@ -35,9 +35,19 @@ config.set_environment_variables = {
 	DOTFILES_THEME = theme_mode,
 }
 
+-- Use the native Metal renderer on macOS.
+config.front_end = "WebGpu"
+
 -- Appearance
 config.hide_tab_bar_if_only_one_tab = true
--- config.window_decorations = "RESIZE"
+-- Avoid macOS Tahoe repeatedly compositing the idle window shadow.
+-- See docs/wezterm-windowserver-gpu.md for the controlled live comparison.
+-- MACOS_USE_BACKGROUND_COLOR_AS_TITLEBAR_COLOR paints the native titlebar with the
+-- color scheme background instead of leaving it to the system material: wezterm hands the
+-- window a *clear* background color when it is opaque (window_background_color() ->
+-- clearColor), which macOS 26/27 composites as a see-through titlebar while other apps'
+-- bars stay solid. Nightly-only flag, matching this machine's nightly build.
+config.window_decorations = "TITLE | RESIZE | MACOS_FORCE_DISABLE_SHADOW | MACOS_USE_BACKGROUND_COLOR_AS_TITLEBAR_COLOR"
 config.window_background_opacity = 1.0
 config.line_height = 1.0
 config.cell_width = 1.0

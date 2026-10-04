@@ -29,6 +29,8 @@ The Brewfile selects `wezterm@nightly`. To migrate an existing stable installati
 
 The helper downloads nightly first, replaces the stable cask without removing preferences, and reinstalls stable if nightly installation fails. Existing WezTerm processes keep their old executable; save terminal-only work and relaunch WezTerm when ready. tmux sessions live independently of the terminal app.
 
+WezTerm uses native Metal (`front_end = "WebGpu"`) and disables its macOS window shadow while retaining the title bar and resizing. A controlled live test isolated the idle WindowServer GPU spike to shadows: about 53–56% with shadows enabled versus 2% disabled, at unchanged 120 Hz. Metal alone did not fix it. See [diagnosis and evidence](docs/wezterm-windowserver-gpu.md). Renderer changes require relaunching the GUI; tmux sessions persist independently.
+
 Nightly updates are deliberate:
 
 ```sh
