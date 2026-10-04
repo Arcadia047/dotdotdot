@@ -119,7 +119,7 @@ config.window_padding = {
 }
 
 -- Scrollback
-config.scrollback_lines = 10000
+config.scrollback_lines = 50000
 config.window_close_confirmation = "AlwaysPrompt"
 config.skip_close_confirmation_for_processes_named = {}
 
