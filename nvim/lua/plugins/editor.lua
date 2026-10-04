@@ -367,6 +367,8 @@ return {
 		},
 		opts = {
 			backend = { "telescope" },
+			-- Diff previews need stable coloring, not a syntax-tree dependency.
+			telescope = { preview = { treesitter = { enable = false } } },
 			diff = { algorithm = "patience", ignore_whitespace = true },
 		},
 	},

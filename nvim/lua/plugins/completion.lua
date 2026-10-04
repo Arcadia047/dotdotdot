@@ -5,13 +5,26 @@ return {
 		lazy = false,
 		opts = {
 			sources = {
-				default = { "lsp", "path", "snippets", "buffer" },
-				per_filetype = {
-					sql = { inherit_defaults = true, "dadbod" },
-				},
+				-- Keep LSP trigger/signature discovery available; gate the menu items
+				-- with Blink's context-aware provider hooks below.
+				default = { "lsp", "path", "buffer" },
+				per_filetype = { sql = { inherit_defaults = true, "dadbod" } },
 				providers = {
-					lsp = { fallbacks = {} },
-					buffer = { max_items = 10, min_keyword_length = 3 },
+					lsp = {
+						should_show_items = require("config.completion").allow("lsp"),
+						fallbacks = function(ctx)
+							return ctx.trigger.initial_kind == "manual" and { "buffer" } or {}
+						end,
+					},
+					buffer = {
+						should_show_items = require("config.completion").allow("buffer"),
+						max_items = 10,
+						min_keyword_length = 3,
+						opts = { get_bufnrs = require("config.completion").project_buffers },
+					},
+					path = {
+						should_show_items = require("config.completion").allow("path"),
+					},
 					snippets = {
 						max_items = 8,
 						score_offset = -3,
@@ -21,6 +34,7 @@ return {
 						},
 					},
 					dadbod = {
+						should_show_items = require("config.completion").allow("dadbod"),
 						name = "Database",
 						module = "vim_dadbod_completion.blink",
 					},
@@ -30,6 +44,8 @@ return {
 				implementation = "prefer_rust",
 			},
 			completion = {
+				accept = { auto_brackets = { enabled = false } },
+				trigger = { show_in_snippet = false },
 				list = {
 					selection = { preselect = false, auto_insert = false },
 				},
@@ -48,9 +64,15 @@ return {
 			signature = { enabled = true },
 			keymap = {
 				preset = "default",
+				["<C-Space>"] = { require("config.completion").show },
+				["<C-x><C-s>"] = {
+					function(cmp)
+						return cmp.show({ providers = { "snippets" } })
+					end,
+				},
 				["<C-k>"] = false, -- Reserved for tmux task switching; signature help opens automatically.
-				["<Tab>"] = { "select_next", "snippet_forward", "fallback" },
-				["<S-Tab>"] = { "select_prev", "snippet_backward", "fallback" },
+				["<Tab>"] = { "snippet_forward", "select_next", "fallback" },
+				["<S-Tab>"] = { "snippet_backward", "select_prev", "fallback" },
 				["<CR>"] = { "accept", "fallback" },
 				["<C-e>"] = { "hide", "fallback" },
 			},

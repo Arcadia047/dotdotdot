@@ -27,7 +27,7 @@ local servers = {
 				completeUnimported = true,
 				gofumpt = true,
 				staticcheck = true,
-				usePlaceholders = true,
+				usePlaceholders = false,
 				hints = {
 					assignVariableTypes = true,
 					compositeLiteralFields = true,
@@ -42,14 +42,14 @@ local servers = {
 	},
 	vtsls = {
 		settings = {
-			complete_function_calls = true,
+			complete_function_calls = false,
 			vtsls = {
 				autoUseWorkspaceTsdk = true,
 				experimental = { completion = { enableServerSideFuzzyMatch = true } },
 			},
 			typescript = {
 				updateImportsOnFileMove = { enabled = "always" },
-				suggest = { completeFunctionCalls = true },
+				suggest = { completeFunctionCalls = false },
 				inlayHints = {
 					enumMemberValues = { enabled = true },
 					functionLikeReturnTypes = { enabled = true },
@@ -61,7 +61,7 @@ local servers = {
 			},
 			javascript = {
 				updateImportsOnFileMove = { enabled = "always" },
-				suggest = { completeFunctionCalls = true },
+				suggest = { completeFunctionCalls = false },
 			},
 		},
 	},
@@ -118,7 +118,7 @@ local servers = {
 			"--clang-tidy",
 			"--header-insertion=iwyu",
 			"--completion-style=detailed",
-			"--function-arg-placeholders=true",
+			"--function-arg-placeholders=false",
 		},
 		init_options = { clangdFileStatus = true },
 	},
@@ -168,7 +168,7 @@ local mason_tools = {
 local function apply_code_action(kind)
 	vim.lsp.buf.code_action({
 		apply = true,
-		context = { only = { kind }, diagnostics = vim.diagnostic.get(0) },
+		context = { only = { kind } },
 	})
 end
 

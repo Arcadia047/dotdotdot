@@ -207,6 +207,40 @@ function M.metals(version, callback)
 	end)
 end
 
+local function server_ready(name, bufnr, mapping)
+	local cmd = vim.lsp.config[name].cmd
+	if type(cmd) == "table" then
+		return vim.fn.executable(cmd[1]) == 1
+	end
+	if type(cmd) ~= "function" then
+		return false
+	end
+	-- Native launchers choose a project-local binary at startup. Mason's package
+	-- metadata supplies executable names without duplicating upstream commands.
+	local package_name = mapping[name]
+	local registry = require("mason-registry")
+	if not package_name or registry.is_installed(package_name) then
+		return true
+	end
+	local ok, pkg = pcall(registry.get_package, package_name)
+	if not ok then
+		return false
+	end
+	for binary in pairs((pkg.spec or {}).bin or {}) do
+		if vim.fn.executable(binary) == 1 then
+			return true
+		end
+		local file = vim.api.nvim_buf_get_name(bufnr)
+		local directory = file ~= "" and vim.fs.dirname(file) or vim.fn.getcwd()
+		for parent in vim.fs.parents(directory .. "/_") do
+			if vim.fn.executable(parent .. "/node_modules/.bin/" .. binary) == 1 then
+				return true
+			end
+		end
+	end
+	return false
+end
+
 function M.requirements(bufnr)
 	local ft = vim.bo[bufnr].filetype
 	local packages, names = {}, {}
@@ -215,7 +249,7 @@ function M.requirements(bufnr)
 		local config = vim.lsp.config[name]
 		if config and vim.tbl_contains(config.filetypes or {}, ft) then
 			table.insert(names, name)
-			if type(config.cmd) == "table" and vim.fn.executable(config.cmd[1]) == 0 and mapping[name] then
+			if not server_ready(name, bufnr, mapping) and mapping[name] then
 				packages[mapping[name]] = true
 			end
 		end
@@ -251,11 +285,11 @@ function M.ensure(bufnr)
 			return
 		end
 		local packages, names = M.requirements(bufnr)
+		local mapping = require("mason-lspconfig.mappings").get_mason_map().lspconfig_to_package
 		-- Enable each available server independently of unrelated tool failures.
 		local function enable_ready()
 			for _, name in ipairs(names) do
-				local cmd = vim.lsp.config[name].cmd
-				if type(cmd) == "table" and vim.fn.executable(cmd[1]) == 1 and not vim.lsp.is_enabled(name) then
+				if server_ready(name, bufnr, mapping) and not vim.lsp.is_enabled(name) then
 					vim.lsp.enable(name)
 				end
 			end

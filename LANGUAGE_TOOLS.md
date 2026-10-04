@@ -6,6 +6,11 @@ buffers in the same Neovim session. Existing executables are reused; installed
 packages are not upgraded automatically. Concurrent requests share an install.
 Failures produce a notification and wait for an explicit retry.
 
+Native LSP command functions are supported alongside command lists. Tool
+readiness comes from the configured command or Mason package metadata, so
+existing system/project-local executables are reused. Neovim and each server's
+upstream configuration retain ownership of project detection and launching.
+
 - `:ToolingInfo`: detected filetype, configured/attached servers, missing packages.
 - `:ToolingInstall`: retry tools and syntax parsers for the current filetype.
 - `:Mason` / `:MasonLog`: package installation status / failure details.
@@ -24,6 +29,19 @@ Syntax parsers also install on first use for configured languages. CUDA uses the
 C++ parser; React, shell, JSONC, and other aliases use Neovim's parser-language
 mapping. Parser generation uses the machine's tree-sitter CLI or installs it
 through Mason. A native compiler is still required for building parsers.
+Parser highlighting queries are checked before attachment. An incompatible
+installed parser is rebuilt with its matching queries rather than skipped as
+already installed. If Neovim has loaded the old parser library, save your
+buffers and restart to load the replacement. Code-action diff previews use
+native syntax highlighting independently of Treesitter availability.
+
+Completion is project-focused while typing. `Ctrl-Space` requests broader LSP
+results; `Ctrl-x Ctrl-s` requests snippets. Snippet placeholders take priority
+over completion navigation, and function-argument placeholder insertion is
+disabled in the Go, TypeScript/JavaScript, and clangd profiles. See
+[keybindings](KEYBINDINGS.md#neovim-completion-and-running) for the full policy.
+Blink's automatic bracket insertion is also disabled; accepting a name should
+not silently turn it into a function call.
 
 Java starts jdtls after its first installation completes. Scala uses the existing
 Metals 1.6.8 Coursier bootstrap and cache location, then attaches to the open
@@ -73,6 +91,11 @@ Neo-tree target an editing window and preserve the tree.
   and enabling a server independently of a formatter failure.
 - `python3 tests/navigation.py`: real PTY → tmux → Neovim tests include the
   visible Which-key buffer menu in Neo-tree.
+- `python3 tests/neovim_workflow.py`: real PTY and installed language-server
+  acceptance for Ruff actions, project completion boundaries, manual snippets,
+  native HTML/CSS/JSON launchers, action previews, rename → save-project → run,
+  TypeScript names/member/signature help, and Go formatting/package execution.
+  Fixtures and editor state are temporary; installed plugins/tools are reused.
 - `python3 tests/first_use.py`: optional network acceptance. Uses installed
   plugins but fresh temporary Mason/parser storage. Opens Lua, waits for actual
   installation, checks LSP hover and formatting, then opens CUDA and checks

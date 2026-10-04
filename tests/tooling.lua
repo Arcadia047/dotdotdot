@@ -53,7 +53,7 @@ end
 package.loaded["mason-registry"] = registry
 package.loaded["mason-lspconfig.mappings"] = {
 	get_mason_map = function()
-		return { lspconfig_to_package = { clangd = "clangd" } }
+		return { lspconfig_to_package = { clangd = "clangd", html = "html-lsp" } }
 	end,
 }
 local function pump()
@@ -148,6 +148,45 @@ check("CUDA requests its server and formatter; server enables as soon as ready",
 	pump()
 	assert(installs == 3, "manual retry did not restart the failed formatter")
 	emit("clang-format", true)
+end)
+check("installed native command-function servers enable without reinstalling", function()
+	local tools = fresh()
+	installed["html-lsp"] = true
+	vim.lsp.config("html", { cmd = function() end, filetypes = { "html" } })
+	vim.bo.filetype = "html"
+	tools.setup({ html = {} })
+	pump()
+	assert(enabled.html, "native launcher was skipped")
+	assert(installs == 1, "only the missing HTML formatter should install")
+end)
+check("native launchers reuse executables from the system", function()
+	local tools = fresh()
+	installed.prettier = true
+	executable["vscode-html-language-server"] = true
+	registry.get_package("html-lsp").spec = { bin = { ["vscode-html-language-server"] = "node:server" } }
+	tools.setup({ html = {} })
+	pump()
+	assert(enabled.html and installs == 0)
+end)
+check("native launchers reuse executables from the project", function()
+	local tools = fresh()
+	installed.prettier = true
+	vim.api.nvim_buf_set_name(0, "/tmp/dotdotdot-native/project/index.html")
+	executable["/tmp/dotdotdot-native/node_modules/.bin/vscode-html-language-server"] = true
+	registry.get_package("html-lsp").spec = { bin = { ["vscode-html-language-server"] = "node:server" } }
+	tools.setup({ html = {} })
+	pump()
+	assert(enabled.html and installs == 0)
+end)
+check("missing native launcher installs once and enables after completion", function()
+	local tools = fresh()
+	installed.prettier = true
+	registry.get_package("html-lsp").spec = { bin = { ["vscode-html-language-server"] = "node:server" } }
+	tools.setup({ html = {} })
+	pump()
+	assert(installs == 1 and not enabled.html)
+	emit("html-lsp", true)
+	assert(enabled.html)
 end)
 vim.notify, vim.fn.executable = original_notify, original_executable
 vim.lsp.enable, vim.lsp.is_enabled = original_enable, original_is_enabled

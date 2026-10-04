@@ -81,18 +81,7 @@ local function task_for_buffer(bufnr)
 	local file = vim.api.nvim_buf_get_name(bufnr)
 	local ft = vim.bo[bufnr].filetype
 	local dir = vim.fs.dirname(file)
-	local project = find_root(bufnr, {
-		".git",
-		"go.mod",
-		"package.json",
-		"pom.xml",
-		"build.gradle",
-		"build.gradle.kts",
-		"settings.gradle",
-		"settings.gradle.kts",
-		"build.sbt",
-		"pyproject.toml",
-	}) or dir
+	local project = require("config.project").root(bufnr) or dir
 
 	if ft == "python" then
 		local python = executable(project .. "/.venv/bin/python", "python3")
@@ -311,9 +300,7 @@ function M.run()
 		vim.notify("Save this buffer before running it", vim.log.levels.WARN)
 		return
 	end
-	if vim.bo[bufnr].modified then
-		vim.cmd("silent write")
-	end
+	require("config.project").save(bufnr)
 
 	local spec = task_for_buffer(bufnr)
 	if not spec then

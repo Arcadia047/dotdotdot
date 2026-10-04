@@ -571,13 +571,14 @@ Terraform, Kotlin, and debugging were acceptance-tested on macOS arm64 on 2026-0
 - Starts without errors in headless and interactive modes.
 - No configuration-owned health errors remain.
 - Completion does not preselect or show ghost text; Enter accepts only the chosen item.
-- Member completion and automatic-import candidates work in supported languages.
+- Automatic completion prioritizes names from open project buffers and relevant member access. Broad LSP/auto-import candidates and curated snippets are available explicitly, with uninterrupted snippet navigation.
 - Errors and warnings appear inline without overwhelming the buffer.
 - Trouble shows current-buffer and workspace diagnostics.
 - Contextual code actions show a preview where edits are available.
 - Safe fixes and import organization run automatically only in configured projects.
 - Loose files are not unexpectedly rewritten.
 - Workspace rename changes references across files where the language server supports it.
+- Running after a workspace refactor saves pending changes in the same project; unrelated project edits remain unsaved.
 - Project formatting respects repository configuration.
 - Telescope, the file tree, buffer line, and sessions form one coherent navigation model.
 - `Ctrl-h/j/k/l` crosses Neovim and tmux pane boundaries predictably.

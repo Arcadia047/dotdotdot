@@ -77,6 +77,12 @@ return {
 				if (vim.treesitter.language.get_lang(ft) or ft) ~= language then
 					return
 				end
+				-- Compile the query before starting the asynchronous highlighter.
+				-- An installed parser may be incompatible with upgraded queries.
+				local valid = pcall(vim.treesitter.query.get, language, "highlights")
+				if not valid then
+					return false
+				end
 				local ok = pcall(vim.treesitter.start, bufnr, language)
 				if ok and indent_filetypes[ft] then
 					vim.bo[bufnr].indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()"
@@ -106,7 +112,8 @@ return {
 						failed[language] = true
 						return
 					end
-					treesitter.install({ language }):await(function(err, installed)
+					-- install() otherwise skips an existing but incompatible parser.
+					treesitter.install({ language }, { force = true }):await(function(err, installed)
 						vim.schedule(function()
 							local buffers = pending[language] or {}
 							pending[language] = nil
@@ -119,7 +126,16 @@ return {
 								return
 							end
 							for buf in pairs(buffers) do
-								attach(buf, language)
+								if not attach(buf, language) then
+									failed[language] = true
+									vim.notify(
+										"Repaired "
+											.. language
+											.. " parser and queries; restart Neovim to reload the parser",
+										vim.log.levels.WARN
+									)
+									break
+								end
 							end
 						end)
 					end)

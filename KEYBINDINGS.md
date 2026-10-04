@@ -87,6 +87,34 @@ Ctrl-l into Neovim. Ctrl-T remains available for the shell fzf file picker.
 WezTerm search/copy/palette overlays are modal host utilities; Escape closes them
 before returning to terminal navigation.
 
+## Neovim completion and running
+
+| Key / context | Action |
+| --- | --- |
+| Ordinary typing | Suggest names from loaded files of the same language in the current project, including hidden buffers |
+| Member access (`.`, `->`, `::`) | Show relevant LSP members; HTML tag positions also use LSP |
+| `Ctrl-Space` | Explicitly request broader LSP/path completion, including auto-imports; replaces an open automatic menu |
+| `Ctrl-x`, then `Ctrl-s` | Request curated snippets explicitly |
+| `Tab` / `Shift-Tab` | Move through snippet placeholders first; otherwise select completion candidates |
+| `Enter` | Accept a selected completion; otherwise insert a newline |
+| `Ctrl-e` | Dismiss completion |
+| `Space c a` | Preview a contextual code action |
+| `Space c A` / `Space c o` | Apply available fix-all / organize-import actions through native LSP handling |
+| `Space r r` | Save modified files in the current project, then run the current context |
+
+Snippets do not appear automatically, and automatic completion stays closed
+while editing their placeholders. Signature help remains enabled. Broad manual
+LSP completion uses project words as a fallback when the LSP has no results,
+rather than duplicating each semantic suggestion as a buffer word.
+Accepting a name does not add parentheses automatically; type `(` when you
+intend to call it. Explicit snippets retain their own punctuation and structure.
+
+The project boundary is the closest Git or supported build/package marker;
+loose files share their containing directory. Nested packages/modules form
+separate contexts. Run leaves edits in unrelated projects unsaved. A write
+failure stops execution; use `:write` and an explicit terminal command when
+you intentionally want to run only the currently saved files.
+
 ## Mouse selection and clipboard
 
 In terminal output, drag to select text, release the mouse, then press **y**

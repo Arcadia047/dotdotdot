@@ -49,6 +49,10 @@ class Configuration(unittest.TestCase):
         print(self.run_command([NVIM, '--headless', '-u', 'NONE', '-i', 'NONE', '-n',
                                 '-l', str(REPO/'tests/tooling.lua')]))
 
+    def test_editor_project_save_boundaries(self):
+        print(self.run_command([NVIM, '--headless', '-u', 'NONE', '-i', 'NONE', '-n',
+                                '-l', str(REPO/'tests/project.lua')]))
+
     def test_bootstrap_theme_migration_and_idempotence(self):
         state = self.root/'config/dotfiles-theme'
         state.unlink()
