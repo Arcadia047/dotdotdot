@@ -2,7 +2,8 @@
 """Real-key zsh acceptance using installed plugins and disposable history/state.
 
 Run explicitly: python3 tests/shell_completion.py. No personal history is read,
-no fixture command is executed, and existing terminal sessions are untouched.
+only disposable navigation/configuration commands run, and existing sessions
+are untouched.
 """
 import argparse
 import fcntl
@@ -42,6 +43,7 @@ POWERLEVEL9K_LEFT_PROMPT_ELEMENTS=(prompt_char)
 POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=()
 source "$DOTDOTDOT_TEST_REPO/.zshrc"
 print -s -- 'echo suggestion-accepted'
+print -s -- 'git status --short'
 print -s -- 'cd gamma-fixture-dir/deeper/place'
 _dotdotdot_test_capture() {
   print -rl -- "$BUFFER" "$POSTDISPLAY" "$CURSOR" > "$HOME/snapshot"
@@ -131,54 +133,49 @@ bindkey '^Xe' autosuggest-enable
         try:
             pump(2)
             suggestion()
-            send(b'\t')
-            pump(0.5)
-            expect_buffer('echo suggestion-accepted', 'Tab inserts the visible suggestion without executing it')
+            send(b'\x1b[C')
+            expect_buffer('echo suggestion-accepted', 'Right accepts the visible history suggestion without executing it')
             send(b'\x15\r')
             suggestion()
-            send(b'\t')
-            expect_buffer('echo suggestion-accepted', 'Tab still accepts after plugins rebind at the next prompt')
-            send(b'\x15')
-            suggestion()
-            send(b'\x06')
-            expect_buffer('echo suggestion-accepted', 'Ctrl-F remains an acceptance alias')
-            send(b'\x15\x18v')
+            send(b'\x01\x06')
+            actual = snapshot()
+            assert actual[2] == '1', f'Ctrl-F must move one character inside the line: {actual!r}'
+            print('PASS Ctrl-F moves inside a command', flush=True)
+            send(b'\x05\x15')
             send(b'cat alpha-fix')
-            assert snapshot()[1] == '', 'Fallback test must have no visible suggestion'
             send(b'\t')
-            expect_buffer('cat alpha-fixture.txt', 'Tab completes a filename when no suggestion is visible')
+            expect_buffer('cat alpha-fixture.txt', 'Tab completes a filename')
             send(b'\x15')
             start = len(output)
             send(b'cat \t')
             wait_for(lambda: b'alpha-fixture.txt' in output[start:] and b'beta-fixture.txt' in output[start:],
-                     'Tab must open the directory completion menu for ambiguous input')
+                     'Tab must open the completion menu for ambiguous input')
             send(b'beta-fixture')
             pump(0.5)
             send(b'\r')
-            expect_buffer('cat beta-fixture.txt', 'Selecting a completion inserts it without executing the command')
-            send(b'\x15\x18e')
-            suggestion()
+            expect_buffer('cat beta-fixture.txt', 'Selecting a completion inserts it without executing')
+            send(b'\x15git stat')
+            wait_for(lambda: snapshot()[1] == 'us --short', 'Seeded git history suggestion must be visible')
             send(b'\t')
-            expect_buffer('echo suggestion-accepted', 'Suggestion acceptance works again after using the completion menu')
-            send(b'\x15cd gamma-fix')
-            wait_for(lambda: snapshot()[:2] == ['cd gamma-fix', 'ture-dir/'],
-                     'The local directory prefix must outrank the seeded history entry')
-            print('PASS The local directory prefix outranks history from another directory', flush=True)
-            send(b'\r')
+            expect_buffer('git status', 'Tab completes the subcommand without accepting history flags')
+            send(b'\x15cd gamma-fix\r')
+            pump(0.3)
             root_path = str(root.resolve())
-            wait_for(lambda: pwd_snapshot() == root_path + '/gamma-fixture-dir',
-                     'The typed prefix must land in the current directory')
-            print('PASS cd uses the current directory prefix before zoxide', flush=True)
+            assert pwd_snapshot() == root_path, 'Native cd must not guess a partial directory name'
+            print('PASS cd rejects incomplete paths', flush=True)
+            send(b'\x15cd gamma-fix\t')
+            expect_buffer('cd gamma-fixture-dir/', 'Tab completes the local directory despite stale history')
+            send(b'\r')
+            wait_for(lambda: pwd_snapshot() == root_path + '/gamma-fixture-dir', 'Completed path must navigate locally')
+            print('PASS native cd navigates the completed path', flush=True)
             send(b'\x15cd gamma-nowhere\r')
-            pump(0.5)
-            assert pwd_snapshot() == root_path + '/gamma-fixture-dir', \
-                'A prefix that matches nothing locally must not leave the fixture directory'
-            print('PASS cd still falls back when nothing local matches', flush=True)
+            pump(0.3)
+            assert pwd_snapshot() == root_path + '/gamma-fixture-dir', 'Missing path must not navigate'
             send(b'\x15source "$DOTDOTDOT_TEST_REPO/.zshrc"\r')
             pump(0.5)
-            suggestion()
+            send(b'git stat')
             send(b'\t')
-            expect_buffer('echo suggestion-accepted', 'Reloading the config repairs an already-initialized shell')
+            expect_buffer('git status', 'Config reload retains native Tab semantics')
             send(b'\x15tmux a -t lear')
             for mode, colorfgbg, command_color, prompt_color in (
                     ('dark', '15;0', '#31748f', '#c4a7e7'),
@@ -225,7 +222,7 @@ bindkey '^Xe' autosuggest-enable
             os.kill(pid, signal.SIGHUP)
             os.close(master)
             os.waitpid(pid, 0)
-    print('All 10 shell completion and 4 theme transition checks passed.')
+    print('All shell completion and theme transition checks passed.')
 
 
 if __name__ == '__main__':

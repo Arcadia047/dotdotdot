@@ -19,7 +19,7 @@ export FZF_DEFAULT_COMMAND='fd --type f --hidden --follow --exclude .git'
 export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
 export FZF_ALT_C_COMMAND='fd --type d --hidden --follow --exclude .git'
 
-# Keep command history local, immediately shared across terminals, and useful.
+# One on-disk history, with immediate writes and local arrow-key navigation.
 typeset -g ZSH_STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}/zsh"
 mkdir -p "$ZSH_STATE_HOME"
 chmod 700 "$ZSH_STATE_HOME"
@@ -39,10 +39,7 @@ setopt HIST_IGNORE_SPACE
 setopt HIST_REDUCE_BLANKS
 setopt HIST_SAVE_NO_DUPS
 setopt HIST_VERIFY
-# INC_APPEND_HISTORY writes each command to the shared history file
-# immediately but, unlike SHARE_HISTORY, never imports other running shells'
-# lines into this session — so arrow-up stays local to the current tmux
-# session/pane while new shells still see the full shared history.
+unsetopt SHARE_HISTORY INC_APPEND_HISTORY_TIME
 setopt INC_APPEND_HISTORY
 
 setopt ALWAYS_TO_END
@@ -59,6 +56,10 @@ unsetopt FLOW_CONTROL
 # Make word deletion stop at path separators, which is friendlier for editing commands.
 WORDCHARS='*?_-.[]~=&;!#$%^(){}<>'
 bindkey -e
+# Reset plugin bindings before loading them, including on configuration reload.
+(( $+functions[disable-fzf-tab] )) && disable-fzf-tab
+bindkey '^I' expand-or-complete
+bindkey '^F' forward-char
 
 # Register completions before compinit. Homebrew and Docker own these files.
 fpath=(
@@ -88,16 +89,26 @@ zstyle ':completion:*:cd:*' tag-order local-directories directory-stack path-dir
 typeset -g ZSH_COMPDUMP="${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompdump-${ZSH_VERSION}"
 mkdir -p "${ZSH_COMPDUMP:h}" "${XDG_CACHE_HOME:-$HOME/.cache}/zsh/completion"
 autoload -Uz compinit
-if [[ -s "$ZSH_COMPDUMP" ]]; then
-  compinit -C -d "$ZSH_COMPDUMP"
-else
-  compinit -d "$ZSH_COMPDUMP"
-fi
+# Native validation notices newly installed completion files.
+compinit -d "$ZSH_COMPDUMP"
+
+# npm's generated script detects Bash first, even when another zsh completer
+# has loaded bashcompinit. Use its supported candidate API directly in zsh.
+_dotdotdot_npm_completion() {
+  local -x NPM_CONFIG_UPDATE_NOTIFIER=false
+  local -a candidates
+  candidates=("${(@f)$(COMP_CWORD=$((CURRENT - 1)) COMP_LINE="$BUFFER" COMP_POINT=0 \
+    npm completion -- "${words[@]}" </dev/null 2>/dev/null)}")
+  [[ -n "${candidates[1]:-}" ]] || return 1
+  compadd -- "${candidates[@]}"
+}
+compdef _dotdotdot_npm_completion npm
 
 # Refresh the completion cache after installing or removing command-line tools.
 comp-rebuild() {
   rm -f -- "$ZSH_COMPDUMP" "$ZSH_COMPDUMP.zwc"
   compinit -d "$ZSH_COMPDUMP"
+  compdef _dotdotdot_npm_completion npm
 }
 
 # fzf provides Ctrl-R history search, Ctrl-T file insertion, and Alt-C directory search.
@@ -109,6 +120,8 @@ comp-rebuild() {
 # Turn normal completion into a fuzzy, explicitly-selected Tab menu.
 if [[ -r "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/fzf-tab/share/fzf-tab/fzf-tab.zsh" ]]; then
   source "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/fzf-tab/share/fzf-tab/fzf-tab.zsh"
+  # Open the picker immediately, even when candidates share a longer prefix.
+  zstyle ':completion:*' menu yes
   # fzf-tab otherwise discards the shared palette in FZF_DEFAULT_OPTS.
   zstyle ':fzf-tab:*' use-fzf-default-opts yes
   zstyle ':fzf-tab:*' fzf-flags --height=55% --layout=reverse --border
@@ -116,63 +129,41 @@ if [[ -r "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/fzf-tab/share/fzf-tab/fzf-tab.zs
   zstyle ':fzf-tab:complete:cd:*' fzf-preview 'ls -la --color=always $realpath 2>/dev/null || ls -la $realpath'
 fi
 
-# Lightweight, non-AI suggestions; Ctrl-F accepts the visible suggestion.
+# Hints recall history only; Tab always belongs to semantic completion.
+# Remove the retired custom widgets/strategy when reloading an existing shell.
+unfunction _zsh_autosuggest_strategy_directory_prefix accept-suggestion-or-complete 2>/dev/null
+zle -D accept-suggestion-or-complete 2>/dev/null
+unset ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE
 if [[ -r "${HOMEBREW_PREFIX:-/opt/homebrew}/share/zsh-autosuggestions/zsh-autosuggestions.zsh" ]]; then
-  # Suggest this directory's own entries before anything remembered from a
-  # different one: typing `cd proj` inside ~/projects/omscs must offer
-  # ./projects, never a history line or learned zoxide match for ~/projects.
-  # The history and completion strategies still answer whenever the last word
-  # is not a plain directory prefix here.
-  _zsh_autosuggest_strategy_directory_prefix() {
-    emulate -L zsh
-    local word="${1##* }"
-    [[ -n "$word" && "$word" != */* && "$word" != "~"* ]] || return 0
-    local -a matches
-    local entry
-    for entry in *(N/); do
-      [[ "$entry" == "$word"* ]] && matches+=("$entry")
-    done
-    (( $#matches )) || return 0
-    local common="${matches[1]}"
-    for entry in "${matches[@]}"; do
-      while [[ "$entry" != "$common"* ]]; do common="${common%?}"; done
-    done
-    local rest="${common#$word}"
-    # `cs7` for cs7295/cs7641 truncates to a prefix that is not a directory,
-    # so hand the word back to the other strategies instead of guessing.
-    [[ -n "$rest" || -d "$common" ]] || return 0
-    typeset -g suggestion="${1}${rest}/"
-  }
-
-  ZSH_AUTOSUGGEST_STRATEGY=(directory_prefix history completion)
-  ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=40
+  ZSH_AUTOSUGGEST_STRATEGY=(history)
   source "${HOMEBREW_PREFIX:-/opt/homebrew}/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
-  bindkey '^F' autosuggest-accept
-
-  # Tab accepts the grey suggestion when one is visible; otherwise it opens the
-  # fzf fuzzy completion menu. Ctrl-F also accepts the visible suggestion.
-  accept-suggestion-or-complete() {
-    if [[ -n "${POSTDISPLAY:-}" ]]; then
-      zle autosuggest-accept
-    elif (( $+widgets[fzf-tab-complete] )); then
-      zle fzf-tab-complete
-    else
-      zle expand-or-complete
-    fi
-  }
-  # This widget reads POSTDISPLAY itself. Autosuggestions must not wrap it as
-  # an editing widget, because that wrapper clears POSTDISPLAY before calling us.
-  ZSH_AUTOSUGGEST_IGNORE_WIDGETS+=(accept-suggestion-or-complete)
-  zle -N accept-suggestion-or-complete
-  bindkey '^I' accept-suggestion-or-complete
 fi
 
-if [[ -r "${HOMEBREW_PREFIX:-/opt/homebrew}/share/zsh-history-substring-search/zsh-history-substring-search.zsh" ]]; then
-  source "${HOMEBREW_PREFIX:-/opt/homebrew}/share/zsh-history-substring-search/zsh-history-substring-search.zsh"
-  bindkey '^[[A' history-substring-search-up
-  bindkey '^[[B' history-substring-search-down
-  bindkey '^[OA' history-substring-search-up
-  bindkey '^[OB' history-substring-search-down
+# Native prefix search; fzf owns only the global history-search UI.
+autoload -Uz up-line-or-beginning-search down-line-or-beginning-search
+zle -N up-line-or-beginning-search
+zle -N down-line-or-beginning-search
+bindkey '^[[A' up-line-or-beginning-search
+bindkey '^[[B' down-line-or-beginning-search
+bindkey '^[OA' up-line-or-beginning-search
+bindkey '^[OB' down-line-or-beginning-search
+shared-history-search() {
+  # Native zsh parses a read-only snapshot in a subshell. Give fzf's existing
+  # widget that history view without changing this editor's history context.
+  local -a entries
+  entries=("${(@0)$(
+    fc -p -a "$HISTFILE" "$HISTSIZE" 0 || return
+    zmodload zsh/parameter
+    printf '%s\0' "${(@kv)history}"
+  )}")
+  entries[-1]=() # printf's final NUL separates, rather than creates, an entry.
+  local -h -A history
+  history=("${entries[@]}")
+  zle fzf-history-widget
+}
+if (( $+widgets[fzf-history-widget] )); then
+  zle -N shared-history-search
+  bindkey '^R' shared-history-search
 fi
 
 # Start the tmux server on first interactive use so `tmux ls` works in a
@@ -197,38 +188,14 @@ ensure_tmux_server() {
 }
 ensure_tmux_server
 
-# Per-project Node versions without the startup cost of NVM.
-# Per-project Node versions without the startup cost of NVM.
-if (( $+commands[fnm] )); then
-  eval "$(fnm env --use-on-cd --version-file-strategy=recursive --corepack-enabled --shell zsh)"
-fi
+# fnm owns version discovery; the adapter keeps navigation non-interactive.
+source "${${(%):-%x}:A:h}/zsh/node.zsh"
 
-# Project-local environment variables and fast directory jumping.
+# Native cd handles paths; z/zi explicitly request learned directory jumping.
+unfunction cd cdi 2>/dev/null
+compdef _cd cd
 (( $+commands[direnv] )) && eval "$(direnv hook zsh)"
-(( $+commands[zoxide] )) && eval "$(zoxide init zsh --cmd cd)"
-
-# zoxide resolves `cd <name>` anywhere on the machine by frecency. Prefer the
-# current directory first: when <name> is a plain directory name here, exactly
-# or as a unique prefix, walk into it, and only ask the learned database when
-# nothing local matches. Exact paths, `cd -`, `cd +2`, `cd -- target`, and
-# multi-argument forms keep zoxide's behavior.
-if (( $+commands[zoxide] )); then
-  cd() {
-    if (( $# == 1 )) && [[ -n "$1" && "$1" != [-+]<-> && "$1" != -* && "$1" != */* && "$1" != "~"* ]] \
-      && [[ ! -d "$1" ]]; then
-      local -a local_directories
-      local entry
-      for entry in *(N/); do
-        [[ "$entry" == "$1"* ]] && local_directories+=("$entry")
-      done
-      if (( $#local_directories == 1 )); then
-        __zoxide_cd "$local_directories[1]"
-        return
-      fi
-    fi
-    __zoxide_z "$@"
-  }
-fi
+(( $+commands[zoxide] )) && eval "$(zoxide init zsh)"
 
 # Keep machine-specific environment variables and secrets outside this repo.
 typeset -g ZSH_LOCAL_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/zsh/local.zsh"

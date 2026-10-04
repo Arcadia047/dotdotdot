@@ -470,12 +470,14 @@ Press `<Space>` and pause whenever a mapping is forgotten; Which-key shows the a
 
 ### Shell
 
-- `Tab` opens fuzzy native completion; Enter chooses the highlighted result.
-- `Ctrl-R` searches local history, `Ctrl-T` inserts a file, and `Alt-C` changes to a selected directory.
-- Up/Down searches history using the text already typed.
-- `Ctrl-F` accepts a full local suggestion; `Alt-F` advances by a word.
-- `cd` learns frequently used directories through zoxide. Use `cdi` for an interactive learned-directory picker. A directory name in the current directory — exact or a unique prefix — wins over the learned match, and the grey suggestion prefers it over history from another directory.
-- Node changes automatically when an ancestor contains `.node-version` or `.nvmrc`; `fnm use <version>` handles an explicit switch.
+- Native zsh owns `cd`, path/options semantics, completion candidates/quoting, and prefix history search.
+- `Tab` completes the current word even with a grey hint. Enter chooses a menu candidate; Enter at the shell prompt executes.
+- Right at the end accepts a history hint. `Ctrl-F` moves within the line and accepts a hint at the end; `Alt-F` advances by a word.
+- `Ctrl-R` searches the one shared local history through a temporary, read-only native zsh history context. Up/Down recalls this shell's prefix matches without importing commands from other open panes.
+- `Ctrl-T` inserts file paths; `Alt-C` picks a directory while preserving pending input.
+- Native `cd` never guesses a prefix or searches learned destinations. Use `z`/`zi` for learned jumps and Tab for incomplete paths.
+- fnm alone resolves recursive version files and supported engines. Automatic activation uses closed stdin and never installs; failures leave a persistent prompt warning naming the still-active runtime. Use `fnm install && fnm use` explicitly to satisfy the requirement.
+- Normal `compinit` validates cache freshness on startup. `comp-rebuild` remains recovery for changed completion definitions.
 
 ## Maintenance, local state, and rollback
 

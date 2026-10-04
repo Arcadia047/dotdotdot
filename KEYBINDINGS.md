@@ -103,12 +103,18 @@ Neovim keeps its own mouse selection and yank behavior.
 
 | Key / context | Action |
 | --- | --- |
-| `Tab` with a grey suggestion | Insert the complete suggestion; Enter still runs the command |
-| `Tab` without a suggestion | Complete the current word, opening the fuzzy menu when there are multiple matches |
-| `Ctrl-F` / Right arrow at the end of the line | Accept the grey suggestion |
-| `Ctrl-n/p`, then Enter in the completion menu | Select a candidate and insert it into the command line |
-| `Esc` in the completion menu | Cancel the menu |
-| `Ctrl-T` / `Ctrl-R` | Search files / command history |
+| `Tab` | Complete the current word; open the fuzzy menu for multiple matches, regardless of grey hints |
+| Right arrow at the end of the line | Accept the grey history hint |
+| `Ctrl-F` | Move forward inside the line; accept a history hint at the end |
+| `Ctrl-n/p`, then Enter in a picker | Select and insert; Enter at the shell prompt runs the command |
+| `Esc` in a picker | Cancel the picker |
+| `Ctrl-T` / `Ctrl-R` | Insert file paths / search shared history, including other panes |
+| `Alt-C` | Pick a directory and retain a pending command |
+| Up/Down | Recall this shell's history; typed text narrows the search by prefix |
+
+`cd` uses native paths and options; Tab completes prefixes. `z` jumps to a learned
+directory and `zi` opens its picker. Missing Node requirements return the prompt
+with a visible warning; use `fnm install && fnm use` for explicit setup.
 
 Already-open shells need `source ~/.zshrc` after a shell configuration change.
 New tmux windows load it automatically.
@@ -142,8 +148,10 @@ It never attaches to an existing tmux session. `./scripts/check` covers the host
 key whitelist and the remaining configuration contracts.
 
 `python3 tests/shell_completion.py` checks real Tab input with installed zsh
-plugins and disposable history: suggestion acceptance, prompt rebinding, Ctrl-F,
-filename completion, and fuzzy-menu selection. It does not touch live shells.
+plugins and disposable history: hint acceptance, native editing, command-aware
+completion, quoted paths, reloads, and pending-line theme transitions.
+`python3 tests/shell_workflow.py` checks cross-pane global search with local
+Up/Down recall, including multiline commands and private tmux key delivery. It does not touch live shells.
 
 `python3 tests/clipboard.py` checks real mouse/key input and both the tmux paste
 buffer and outgoing OSC 52 clipboard messages in a private PTY. It covers fast,

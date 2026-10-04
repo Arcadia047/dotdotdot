@@ -65,21 +65,49 @@ captures OSC 52 clipboard messages without touching the system clipboard. The
 old configuration reproduced a two-character copy; the fixed configuration
 passes fast, reverse, multiline, rectangle, keyboard, and immediate-paste checks.
 
-## Shell completion
+## Shell workflow
 
-Tab inserts a visible grey autosuggestion without executing it. With no visible
-suggestion, Tab uses normal fuzzy completion. Ctrl-F remains an acceptance alias.
-The custom Tab widget is excluded from zsh-autosuggestions wrapping so it can
-read the suggestion before the plugin clears it.
+Native zsh owns paths, editing, completion semantics, and history. fzf/fzf-tab
+provide search menus; zsh-autosuggestions offers advisory history hints.
 
-`cd` and the grey suggestion both prefer the current directory. An exact
-directory name, or a unique name prefix such as `projects` for `./projects`,
-wins over a history entry or a zoxide match recorded in another directory;
-zoxide answers only when nothing local matches.
+- **Tab** completes the current word. Multiple candidates open a fuzzy menu;
+  Enter inserts the selected candidate, and a second Enter runs the command.
+  Tab behaves the same whether a grey hint is visible or still arriving.
+- **Right** at the end accepts the grey history hint. **Ctrl-F** moves forward
+  inside a command and accepts a hint at the end. Hints never execute commands.
+- **cd** uses native zsh paths and options. Complete a partial directory with
+  Tab; ambiguous prefixes require selection. **z** explicitly jumps to a learned
+  directory; **zi** opens the learned-directory picker.
+- **Up/Down** recalls this shell's history, searching by the prefix already typed.
+  **Ctrl-R** searches the shared history, including commands from other open
+  panes. A read-only native zsh history view supplies the same local file to fzf
+  without importing other panes' commands into arrow navigation. Nothing syncs
+  remotely.
+- **Ctrl-T** inserts selected file paths with quoting; **Alt-C** picks a directory
+  while retaining a pending command. Esc cancels a picker.
 
-Run `python3 tests/shell_completion.py` for actual-key acceptance with installed
-shell plugins and disposable history. After updating shell settings, run
-`source ~/.zshrc` in existing shells or open a new tmux window.
+Completion initialization validates its native cache when each shell starts,
+so newly installed completion files appear without manual intervention.
+`comp-rebuild` remains a recovery command after changing completion definitions.
+npm script candidates come from `npm completion` through a native zsh adapter.
+This avoids npm choosing its Bash integration after another completer loads
+Bash compatibility functions; no project script parser is maintained here.
+
+fnm remains the Node version authority, including recursive `.node-version`,
+`.nvmrc`, and supported `package.json` engines. Installed requirements activate
+on entry and before the prompt. Navigation never downloads a runtime or asks an
+installation question. If activation fails, the shell reports the error and the
+prompt retains **Node requirement unmet (active …)**. The previous runtime can
+still run; it does not satisfy the project requirement. Set up the project
+explicitly with `fnm install && fnm use`; the warning clears when activation
+succeeds. direnv continues to own trusted project environment variables.
+
+Run `python3 tests/shell_completion.py` and `python3 tests/shell_workflow.py`
+for real-key acceptance with installed plugins and disposable state. The repository
+checks also cover completion-cache freshness and offline fnm activation.
+After updating, run `source ~/.zshrc` in existing shells or open a new tmux window.
+Reload restores native `cd`, resets Tab/Ctrl-F, and replaces the old interactive
+Node hook. No installed package needs to be removed.
 
 ## Java policy
 

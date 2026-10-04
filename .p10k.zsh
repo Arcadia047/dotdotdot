@@ -56,6 +56,7 @@
     # =========================[ Line #2 ]=========================
     newline                   # \n
     # virtualenv              # python virtual environment
+    node_warning              # stays visible even when the right prompt cannot fit
     prompt_char               # prompt symbol
   )
 
