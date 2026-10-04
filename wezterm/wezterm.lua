@@ -5,22 +5,42 @@ local act = wezterm.action
 -- Runtime selection is machine-local; bootstrap seeds it from theme.conf.
 local theme_file = (os.getenv("XDG_CONFIG_HOME") or (os.getenv("HOME") .. "/.config")) .. "/dotfiles-theme"
 wezterm.add_to_config_reload_watch_list(theme_file)
-local function read_theme_mode()
+local function read_theme_selection()
 	local file = io.open(theme_file, "r")
 	if file then
 		local mode = (file:read("*l") or ""):match("^%s*(.-)%s*$")
+		file:close()
+		if mode == "auto" or mode == "dark" or mode == "light" then
+			return mode
+		end
+	end
+	return os.getenv("DOTFILES_THEME") == "dark" and "dark" or "light"
+end
+
+local function system_theme_mode(appearance)
+	if appearance then
+		return appearance:find("Dark") and "dark" or "light"
+	end
+	if wezterm.gui then
+		return system_theme_mode(wezterm.gui.get_appearance())
+	end
+	-- CLI config parsing has no GUI; use the last appearance published by it.
+	local file = io.open(theme_file .. "-system", "r")
+	if file then
+		local mode = file:read("*l")
 		file:close()
 		if mode == "dark" or mode == "light" then
 			return mode
 		end
 	end
-	return os.getenv("DOTFILES_THEME") == "light" and "light" or "dark"
+	return os.getenv("DOTFILES_THEME") == "dark" and "dark" or "light"
 end
 
-local theme_mode = read_theme_mode()
+local selection = read_theme_selection()
+local theme_mode = selection == "auto" and system_theme_mode() or selection
 local color_schemes = {
-	dark = "Catppuccin Macchiato",
-	light = "Catppuccin Latte",
+	dark = "rose-pine",
+	light = "rose-pine-dawn",
 }
 
 -- Font configuration
@@ -33,7 +53,46 @@ config.font_size = 20.0
 config.color_scheme = color_schemes[theme_mode]
 config.set_environment_variables = {
 	DOTFILES_THEME = theme_mode,
+	-- OMP uses this fallback before its OSC 11 background query completes.
+	COLORFGBG = theme_mode == "dark" and "15;0" or "0;15",
 }
+
+-- macOS appearance changes emit this event. Publish once per resolved mode;
+-- configuration evaluation itself stays free of writes and child processes.
+wezterm.on("window-config-reloaded", function(window)
+	local choice = read_theme_selection()
+	local mode = choice == "auto" and system_theme_mode(window:get_appearance()) or choice
+	local overrides = window:get_config_overrides() or {}
+	local colorfgbg = mode == "dark" and "15;0" or "0;15"
+	local environment = overrides.set_environment_variables or {}
+	if
+		overrides.color_scheme ~= color_schemes[mode]
+		or environment.DOTFILES_THEME ~= mode
+		or environment.COLORFGBG ~= colorfgbg
+	then
+		overrides.color_scheme = color_schemes[mode]
+		environment.DOTFILES_THEME = mode
+		environment.COLORFGBG = colorfgbg
+		overrides.set_environment_variables = environment
+		window:set_config_overrides(overrides)
+	end
+	local key = choice .. ":" .. mode
+	if choice == "auto" and wezterm.GLOBAL.dotdotdot_theme_mode ~= key then
+		local ok, _, stderr = wezterm.run_child_process({
+			"/bin/zsh",
+			"-dfc",
+			'source "$1"; _dotdotdot_sync_system_theme "$2" force',
+			"dotdotdot-theme",
+			wezterm.config_dir .. "/../zsh/theme.zsh",
+			mode,
+		})
+		if not ok then
+			wezterm.log_error("Theme sync failed: " .. stderr)
+			return
+		end
+	end
+	wezterm.GLOBAL.dotdotdot_theme_mode = key
+end)
 
 -- Use the native Metal renderer on macOS.
 config.front_end = "WebGpu"

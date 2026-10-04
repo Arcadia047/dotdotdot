@@ -37,14 +37,14 @@
   # Zsh >= 5.1 is required.
   [[ $ZSH_VERSION == (5.<1->*|<6->.*) ]] || return
 
-  # Prompt colors.
-  local grey='242'
-  local red='#FF5C57'
-  local yellow='#F3F99D'
-  local blue='#57C7FF'
-  local magenta='#FF6AC1'
-  local cyan='#9AEDFE'
-  local white='#F1F1F0'
+  # Rosé Pine palette follows the shared machine-local theme mode.
+  local grey="${DOTDOTDOT_COLORS[subtle]:-#797593}"
+  local red="${DOTDOTDOT_COLORS[love]:-#b4637a}"
+  local yellow="${DOTDOTDOT_COLORS[gold]:-#ea9d34}"
+  local blue="${DOTDOTDOT_COLORS[pine]:-#286983}"
+  local magenta="${DOTDOTDOT_COLORS[iris]:-#907aa9}"
+  local cyan="${DOTDOTDOT_COLORS[foam]:-#56949f}"
+  local white="${DOTDOTDOT_COLORS[text]:-#464261}"
 
   # Left prompt segments.
   typeset -g POWERLEVEL9K_LEFT_PROMPT_ELEMENTS=(

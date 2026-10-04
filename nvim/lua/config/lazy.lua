@@ -44,7 +44,7 @@ require("lazy").setup({
 		lazy = true,
 		version = false,
 	},
-	install = { colorscheme = { "catppuccin" } },
+	install = { colorscheme = { "rose-pine" } },
 	checker = { enabled = false },
 	rocks = { enabled = false },
 	change_detection = { notify = false },

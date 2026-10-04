@@ -140,7 +140,7 @@ return {
 	{
 		"akinsho/bufferline.nvim",
 		event = "VeryLazy",
-		dependencies = { "nvim-tree/nvim-web-devicons", "catppuccin/nvim" },
+		dependencies = { "nvim-tree/nvim-web-devicons", "rose-pine/neovim" },
 		keys = {
 			{
 				"[b",
@@ -244,7 +244,6 @@ return {
 		},
 		opts = function()
 			return {
-				highlights = require("catppuccin.special.bufferline").get_theme(),
 				options = {
 					numbers = "ordinal",
 					diagnostics = "nvim_lsp",

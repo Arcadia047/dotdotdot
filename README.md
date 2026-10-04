@@ -95,21 +95,142 @@ For a Java 17 project with jdtls on Java 25, install both JDKs and export the tw
 
 ## Theme state
 
-`theme dark` / `theme light` atomically changes the local state file without writing into this checkout. WezTerm watches that file; existing tmux sessions refresh even when the command is issued outside tmux; Neovim refreshes on focus and reads it on startup. The file overrides inherited `DOTFILES_THEME` for **both** modes. The environment is only a fallback when the file is unavailable or invalid.
+Automatic mode follows macOS appearance: Rosé Pine Dawn in light mode and
+Rosé Pine main in dark mode across WezTerm, tmux, Powerlevel10k, shell
+highlighting/suggestions, fzf, and Neovim (including its buffer tabs).
+Tab completion inherits the same fzf palette. Tmux retains filled number/name
+blocks for each window, with a stronger accent for the active window. Neovim's
+Mason headers, database connection indicators, and debugger highlights also
+follow the selected palette.
+`theme auto` enables system following; `theme light` and `theme dark` select a
+fixed palette until auto is enabled again. `theme` shows the current selection
+and, in auto mode, the resolved appearance. The shell prompt remains Powerlevel10k;
+`omp` refers to the optional Oh My Pi coding harness.
 
-`theme.conf` is the tracked first-install default, not mutable session state. The old theme symlink is retained in `~/.dotfiles-backups/<timestamp>/` during migration.
+The machine-local `dotfiles-theme` file is the selection authority (`auto`,
+`light`, or `dark`). WezTerm watches it and uses its native appearance-change
+event to publish macOS changes to `dotfiles-theme-system`, a derived cache
+shared with the other components. That cache has no effect on manual selections.
+WezTerm refreshes existing tmux sessions and their environments on each auto
+transition. Tmux resolves its startup environment from shared state and excludes
+theme variables from client environment imports, so an older shell cannot
+replace the selected mode when creating or attaching a session.
+Neovim checks the shared mode once a second and on focus; shell
+colors and the prompt refresh at the next prompt or editing redraw. Ordinary
+arguments and paths inherit the terminal foreground, so they remain readable
+even if appearance changes while the shell is idle with a pending command.
+Keep WezTerm running for live
+system following. The commands replace state files atomically and never modify
+the checkout. A valid selection overrides inherited `DOTFILES_THEME`; the
+environment remains a fallback when the selection file is missing or invalid.
+
+`theme.conf` is the tracked first-install default (`auto`), not mutable session
+state. Existing valid machine-local selections are preserved by bootstrap;
+run `theme auto` to opt an existing installation into system following. The
+old theme symlink is retained in `~/.dotfiles-backups/<timestamp>/` during migration.
+
+### Oh My Pi
+
+Oh My Pi manages its own config/auth/sessions. Its native appearance detector
+follows the terminal background; `COLORFGBG` provides the matching startup
+fallback in WezTerm, tmux, and new shell processes. Bootstrap links only the
+custom theme when `omp` is installed. To select both slots once:
+
+```sh
+omp config set theme.light dotdotdot-rose-pine-dawn
+omp config set theme.dark dark-rose-pine
+```
+
+The tracked Dawn theme lives in `omp/themes/` and covers the OMP 18.4.1 theme
+schema, including tool panels, Markdown/code, and the status line. See
+[omp/README.md](omp/README.md) for provenance and profile details. A running
+harness can adopt the slots through `/settings`; new launches read them from
+config. New shells/editors load the updated configuration; existing shells
+need `source ~/.zshrc`, and existing editors need to reload the theme plugin or
+restart after saving their buffers.
+
+The tmux theme is loaded explicitly from the pinned Rosé Pine submodule before
+TPM loads session plugins. The legacy Catppuccin submodule is retained unused;
+TPM's repository-name mapping would otherwise confuse these two `tmux` repos.
 
 ## Verify changes and updates
 
 1. Run `./scripts/check`, then `./bootstrap.sh --check`.
 2. Check `wezterm --version` and `wezterm show-keys --lua` after a terminal update.
 3. Run `python3 tests/navigation.py`. In WezTerm verify `Cmd-T/W` do nothing, `Cmd-Shift-P` opens the palette, and `Ctrl-T` still opens shell fzf. Test `Alt-r` resize mode and Escape on the desktop.
-4. Switch light → dark from both inside and outside tmux. Check all three apps after refocusing Neovim; `git diff -- theme.conf wezterm/wezterm.lua` must remain unchanged by the switch.
+4. Run `python3 tests/shell_completion.py` for real-key completion and pending-command theme checks, and `python3 tests/tmux_theme.py` for private-server palette and stale-client environment checks. In `theme auto`, change macOS appearance and check WezTerm, tmux, Neovim, and OMP; shell colors refresh at the next prompt or keystroke. Check that `theme light` / `theme dark` stay fixed through system changes, then return to `theme auto`. Switching must leave `git diff -- theme.conf wezterm/wezterm.lua` unchanged.
 5. Open a Java project and check the attached jdtls client's `cmd_env.JAVA_HOME`, project runtime, completion, and a main-class debugger session. Repeat language acceptance only for tooling changed by an update.
 
 Use `./scripts/benchmark-startup` for repeated shell/editor startup measurements. It redirects transient state to a temporary directory, skips tmux auto-start, and preserves installed plugin data. Caches are warmed in the temporary directory. The shell measurement excludes machine-local interactive overrides; the report names that boundary. Compare medians on the same machine before considering performance changes.
 
 Plugin commits are recorded in `nvim/lazy-lock.json` and tmux submodules. Homebrew and Mason tool versions are not fully locked; installation consistency is not a promise of byte-for-byte reproducibility. Review upgrades intentionally and record the actual build plus acceptance results. Dated results in the design document describe earlier versions.
+
+## Automatic appearance verification — 2026-10-03
+
+- The plain-WezTerm argument regression was stale Dawn foregrounds on main's
+  dark background: `tmux a -t learn` rendered `a` and `learn` with only 1.86:1
+  contrast. Arguments now inherit the terminal foreground, and a ZLE redraw
+  refreshes the prompt, syntax highlighting, suggestions, and fzf palette.
+  Real-key tests passed both pending-command transitions after a configuration
+  reload with the actual Powerlevel10k config, preserving input and cursor.
+  Both transitions also preserve and repaint the visible autosuggestion.
+  A disposable native WezTerm tab rendered those arguments at 13.39:1 contrast.
+  Existing shells must run `source ~/.zshrc` once to install the new hook.
+- A live tmux session still carried light variables while its status used main.
+  A private-server regression reproduced stale shell variables overriding the
+  session on creation. Tmux now resolves its global environment with the palette
+  and removes legacy theme imports from `update-environment`, preserving other
+  entries. Seven acceptance checks cover manual/automatic palettes and creating
+  or attaching from a stale client. The test isolates Continuum's process-list
+  probe so other running servers do not intentionally suppress its save hook.
+  The live sessions were synchronized and
+  read back with matching dark variables; the running editor also matched main.
+- Follow-up checks passed both real OMP palettes, private tmux light → dark →
+  light with filled window blocks, and installed Neovim plugin highlights plus
+  automatic dark → light → dark changes without focus events. This checks OMP's
+  actual startup rendering; an OS-triggered transition in an already-running
+  harness was not exercised in this follow-up.
+- Repository checks passed: 13 disposable-home integration tests, 13 Lua
+  configuration checks, and five tooling checks. Automatic transitions cover
+  light/dark and high-contrast appearance values, manual overrides, and a GUI
+  helper with Homebrew absent from PATH. All 10 shell completion checks and four
+  pending-command/suggestion theme transition checks passed.
+- A real WezTerm config event published the current macOS dark appearance and
+  refreshed tmux from Dawn to main. WezTerm reported main's `#191724` background;
+  a new shell exported matching `DOTFILES_THEME=dark` and `COLORFGBG=15;0`.
+  The macOS appearance setting itself was unchanged during these checks.
+- The installed Neovim theme passed automatic dark → light → dark repaints
+  without focus events. The running editor was refreshed with buffers and its
+  cursor preserved. The machine doctor passed with the existing dirty tmux
+  submodule warning. This machine is now set to `theme auto`.
+
+## Rosé Pine verification — 2026-09-30
+
+- Repository checks passed: 12 disposable-home integration tests, 11 Lua
+  configuration checks, and five tooling checks. All 10 real-key shell
+  completion checks passed. The machine doctor passed with only the existing
+  modified-submodule warning.
+- Actual WezTerm and tmux OSC 11 replies both reported Dawn's `#faf4ed` base.
+  The live tmux status uses Dawn and retains its Continuum save hook. Existing
+  session environments now agree with the shared light mode.
+- A private tmux server and the real Neovim theme plugin passed light → dark →
+  light checks. Full Neovim startup loaded Rose Pine and its buffer tabs. The
+  running editor was refreshed in place; buffer modification state and cursor
+  position were preserved.
+- The follow-up audit restored filled tmux window blocks and verified them in
+  both modes. A disposable shell PTY confirmed that Tab completion renders
+  Dawn's actual background/text RGB values while its selection behavior still
+  passes all 10 completion checks. Neovim's Mason, Dadbod syntax, debugger,
+  Overseer, completion, and buffer-tab highlights passed light → dark → light
+  checks using the installed plugins. Both running editors use light Rosé Pine.
+- OMP 18.4.1 parsed and rendered both theme slots in disposable PTY sessions;
+  no model prompts were sent. Native CLI readback confirmed both persisted
+  slots. The prior OMP config is backed up under
+  `~/.dotfiles-backups/20260930-rose-pine/omp-config.yml` on this machine.
+  The doctor now checks the custom theme link whenever OMP is installed.
+- Existing shells still need `source ~/.zshrc`; new shells pick up prompt,
+  suggestions, syntax highlighting, and fzf automatically. Existing OMP
+  sessions may need `/settings` or a fresh launch to adopt the new slot names.
 
 ## Verification record — 2026-09-09
 

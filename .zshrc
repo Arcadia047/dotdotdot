@@ -109,6 +109,8 @@ comp-rebuild() {
 # Turn normal completion into a fuzzy, explicitly-selected Tab menu.
 if [[ -r "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/fzf-tab/share/fzf-tab/fzf-tab.zsh" ]]; then
   source "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/fzf-tab/share/fzf-tab/fzf-tab.zsh"
+  # fzf-tab otherwise discards the shared palette in FZF_DEFAULT_OPTS.
+  zstyle ':fzf-tab:*' use-fzf-default-opts yes
   zstyle ':fzf-tab:*' fzf-flags --height=55% --layout=reverse --border
   zstyle ':fzf-tab:*' switch-group '<' '>'
   zstyle ':fzf-tab:complete:cd:*' fzf-preview 'ls -la --color=always $realpath 2>/dev/null || ls -la $realpath'
@@ -246,3 +248,11 @@ alias ....='cd ../../..'
 # Syntax highlighting must be sourced after every other ZLE plugin.
 [[ -r "${HOMEBREW_PREFIX:-/opt/homebrew}/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]] \
   && source "${HOMEBREW_PREFIX:-/opt/homebrew}/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+
+# Resolve the current palette for shell colors, and follow external theme changes.
+_dotdotdot_apply_shell_theme
+typeset -g _DOTDOTDOT_APPLIED_THEME="$DOTFILES_THEME"
+autoload -Uz add-zsh-hook
+add-zsh-hook precmd _dotdotdot_refresh_theme
+autoload -Uz add-zle-hook-widget
+add-zle-hook-widget zle-line-pre-redraw _dotdotdot_refresh_shell_line

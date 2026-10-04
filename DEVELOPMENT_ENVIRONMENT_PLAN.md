@@ -36,7 +36,7 @@ Prefer mature native functionality and language-server capabilities over overlap
 - Use VS Code as the pragmatic exception for rich `.ipynb` notebook work.
 - Keep Neovim hand-built and modular; do not restore LazyVim as a framework.
 - Use tmux as the long-running process and shell layer.
-- Use Catppuccin Macchiato for the active dark theme and Latte for the optional light theme. The machine-local `dotfiles-theme` file is authoritative for WezTerm, tmux, and Neovim; `theme.conf` only seeds new installations.
+- Follow macOS appearance by default: Rosé Pine Dawn for light mode and Rosé Pine main for dark mode. The machine-local `dotfiles-theme` selection (`auto|light|dark`) is authoritative; WezTerm's native appearance event publishes the derived `dotfiles-theme-system` cache and refreshes tmux. Neovim checks shared state once a second; shell colors refresh at the next prompt or editing redraw, with ordinary arguments inheriting the terminal foreground. Tmux excludes theme variables from client imports to prevent stale shells overriding shared state. `theme.conf` only seeds new installations. Oh My Pi selects its corresponding theme slot from terminal appearance, with `COLORFGBG` as a startup fallback.
 - Do not add a general Neovim terminal manager initially.
 - Restore Neovim buffers and split layouts per project.
 - Keep completion explicit: no preselection, no ghost text, manual selection, Enter to accept.
@@ -67,7 +67,7 @@ This document records design scope and historical acceptance; README.md is the c
 - Overseer owns one project-aware run interface. It prefers project scripts/build tools and falls back to safe current-file execution where practical. Output is available in the bottom task panel and parsable failures feed quickfix/diagnostics.
 - Dadbod supports SQLite/PostgreSQL without committed connection strings. Render Markdown supplies inline editor rendering without rebuilding a notebook stack.
 - Zsh uses one cached native completion initialization, fzf-tab, local autosuggestions, syntax highlighting, prefix history search, fzf history/files/directories, zoxide, direnv, and fnm.
-- WezTerm, tmux, and Neovim share one Catppuccin mode: Macchiato is the default dark palette and Latte is the prepared light palette.
+- WezTerm, tmux, Powerlevel10k, shell highlighting/suggestions, fzf, Neovim, and Oh My Pi use Rosé Pine: Dawn is the default light palette and main is the dark palette.
 - Homebrew Python is the system Python, each Mac selects project and jdtls Java runtimes independently through a local profile, fnm owns per-project Node, Coursier/Scala CLI/Metals own Scala learning workflows, and Homebrew provides Kotlin and Terraform CLIs for shell and task use.
 - The Brewfile and bootstrap script provision Homebrew, the supported CLI tools, WezTerm, AeroSpace, fonts, runtimes, editor plugins, and pinned tmux plugins while backing up conflicting links before changing them.
 
@@ -99,7 +99,7 @@ Intentional boundaries remain: rich Jupyter notebooks stay in VS Code; tmux owns
 - Which-key
 - Gitsigns
 - Trouble
-- Catppuccin (Macchiato dark, Latte light)
+- Rosé Pine (automatic macOS appearance: Dawn light, main dark)
 
 ### Navigation and workspace
 

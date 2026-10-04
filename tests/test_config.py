@@ -17,7 +17,8 @@ class Configuration(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.env = os.environ.copy()
         for name in ('JAVA_HOME', 'DOTDOTDOT_JAVA_VERSION', 'DOTDOTDOT_JDTLS_JAVA_VERSION',
-                     'DOTFILES_THEME', 'TMUX', 'ZDOTDIR', '_DOTDOTDOT_ENV_LOADED'):
+                     'DOTFILES_THEME', 'TMUX', 'ZDOTDIR', '_DOTDOTDOT_ENV_LOADED',
+                     '_DOTDOTDOT_FZF_BASE_OPTS'):
             self.env.pop(name, None)
         self.env.update(HOME=str(self.root), XDG_CONFIG_HOME=str(self.root/'config'),
                         XDG_CACHE_HOME=str(self.root/'cache'), XDG_STATE_HOME=str(self.root/'state'),
@@ -62,6 +63,73 @@ class Configuration(unittest.TestCase):
         self.assertEqual(len(backups), 1)
         self.assertTrue(backups[0].is_symlink())
 
+    def test_fresh_bootstrap_defaults_to_auto_and_preserves_explicit_dark(self):
+        state = self.root/'config/dotfiles-theme'
+        state.unlink()
+        self.run_command(['/bin/bash', '-c', 'source ./bootstrap.sh; initialize_theme'])
+        self.assertEqual(state.read_text(), 'auto\n')
+        state.write_text('dark\n')
+        self.run_command(['/bin/bash', '-c', 'source ./bootstrap.sh; initialize_theme'])
+        self.assertEqual(state.read_text(), 'dark\n')
+
+    def test_auto_theme_follows_system_updates_and_respects_manual_override(self):
+        state = self.root/'config/dotfiles-theme'
+        cache = self.root/'config/dotfiles-theme-system'
+        state.write_text('auto\n')
+        cache.write_text('light\n')
+        fake_bin = self.root/'brew/bin'
+        fake_bin.mkdir()
+        tmux = fake_bin/'tmux'
+        tmux.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$HOME/tmux.calls"\n'
+                        'if [ "$1" = list-sessions ]; then printf \'$0\\n\'; fi\n')
+        tmux.chmod(0o755)
+        # Match a GUI launch: brew is installed but absent from PATH.
+        self.env['PATH'] = '/usr/bin:/bin'
+        self.run_command(['/bin/zsh', '-dfc', '''
+source ./zsh/theme.zsh
+_dotdotdot_system_theme() { print dark; }
+[[ "$DOTFILES_THEME" == light ]] || exit 1
+theme auto
+[[ "$(theme)" == 'auto (dark)' && "$COLORFGBG" == '15;0' ]] || exit 1
+_dotdotdot_sync_system_theme light
+[[ "$(theme)" == 'auto (light)' && "$COLORFGBG" == '0;15' ]] || exit 1
+_dotdotdot_sync_system_theme light
+theme dark
+_dotdotdot_sync_system_theme light force
+[[ "$(theme)" == dark && "$COLORFGBG" == '15;0' ]] || exit 1
+'''])
+        self.assertEqual(state.read_text(), 'dark\n')
+        self.assertEqual(cache.read_text(), 'light\n')
+        calls = (self.root/'tmux.calls').read_text()
+        self.assertEqual(calls.count('source-file'), 3)
+        self.assertIn('set-environment -t $0 DOTFILES_THEME light', calls)
+        self.assertIn('set-environment -t $0 COLORFGBG 0;15', calls)
+
+    def test_shell_palette_refreshes_after_external_theme_change(self):
+        self.env['FZF_DEFAULT_OPTS'] = '--layout=reverse'
+        (self.root/'.p10k.zsh').symlink_to(REPO/'.p10k.zsh')
+        output = self.run_command(['/bin/zsh', '-dfc', '''
+source ./zsh/theme.zsh
+p10k() { :; }
+source ./.p10k.zsh
+_dotdotdot_refresh_theme
+[[ "$POWERLEVEL9K_DIR_FOREGROUND" == '#31748f' ]] || exit 1
+[[ "$ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE" == 'fg=#908caa' ]] || exit 1
+print light > "$XDG_CONFIG_HOME/dotfiles-theme"
+_dotdotdot_refresh_theme
+[[ "$DOTFILES_THEME" == light && "$COLORFGBG" == '0;15' ]] || exit 1
+[[ "$DOTDOTDOT_COLORS[base]" == '#faf4ed' ]] || exit 1
+[[ "$POWERLEVEL9K_DIR_FOREGROUND" == '#286983' ]] || exit 1
+[[ "$ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE" == 'fg=#797593' ]] || exit 1
+[[ "$FZF_DEFAULT_OPTS" == '--layout=reverse '* && "$FZF_DEFAULT_OPTS" == *'bg:#faf4ed'* ]] || exit 1
+_dotdotdot_refresh_theme
+print -r -- "$FZF_DEFAULT_OPTS"
+/bin/zsh -dfc 'source ./zsh/theme.zsh; _dotdotdot_apply_shell_theme; print -r -- "$FZF_DEFAULT_OPTS"'
+'''])
+        self.assertEqual(len(output.splitlines()), 2)
+        for line in output.splitlines():
+            self.assertEqual(line.count('--color='), 1)
+
     def test_bootstrap_dry_run_leaves_theme_link_untouched(self):
         state = self.root/'config/dotfiles-theme'
         state.unlink()
@@ -90,7 +158,8 @@ class Configuration(unittest.TestCase):
         fake_bin = self.root/'bin'
         fake_bin.mkdir()
         tmux = fake_bin/'tmux'
-        tmux.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$HOME/tmux.calls"\n')
+        tmux.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$HOME/tmux.calls"\n'
+                        'if [ "$1" = list-sessions ]; then printf \'$0\\n$1\\n\'; fi\n')
         tmux.chmod(0o755)
         self.env['PATH'] = str(fake_bin) + ':' + self.env['PATH']
         self.run_command(['/bin/zsh', '-dfc', 'source ./zsh/theme.zsh; theme light; theme dark'])
@@ -99,6 +168,11 @@ class Configuration(unittest.TestCase):
         self.assertEqual(original.read_text(), 'dark\n')
         calls = (self.root/'tmux.calls').read_text()
         self.assertEqual(calls.count('source-file'), 2)
+        for session in ('$0', '$1'):
+            self.assertIn(f'set-environment -t {session} DOTFILES_THEME light', calls)
+            self.assertIn(f'set-environment -t {session} COLORFGBG 0;15', calls)
+            self.assertIn(f'set-environment -t {session} DOTFILES_THEME dark', calls)
+            self.assertIn(f'set-environment -t {session} COLORFGBG 15;0', calls)
         self.assertNotIn('new-session', calls)
         self.run_command(['/bin/zsh', '-dfc', 'source ./zsh/theme.zsh; theme invalid'], success=False)
         self.assertEqual(state.read_text(), 'dark\n')

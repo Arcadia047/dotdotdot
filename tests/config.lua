@@ -23,8 +23,25 @@ local actions = setmetatable({}, {
 		return action
 	end,
 })
+local wez_events, wez_children = {}, {}
+local system_appearance = "Light"
+local wez_global = {}
 package.preload.wezterm = function()
 	return {
+		config_dir = repo .. "/wezterm",
+		GLOBAL = wez_global,
+		gui = {
+			get_appearance = function()
+				return system_appearance
+			end,
+		},
+		on = function(name, callback)
+			wez_events[name] = callback
+		end,
+		run_child_process = function(args)
+			table.insert(wez_children, args)
+			return true, "", ""
+		end,
 		action = actions,
 		config_builder = function()
 			return {}
@@ -70,7 +87,8 @@ end)
 check("dark file overrides inherited light environment", function()
 	vim.env.DOTFILES_THEME = "light"
 	local spec = dofile(repo .. "/nvim/lua/plugins/theme.lua")
-	equal(spec[1].opts.flavour, "macchiato")
+	equal(require("config.theme").variant(require("config.theme").mode()), "main")
+	equal(spec[1].name, "rose-pine")
 end)
 check("unversioned JDK retains discovered path", function()
 	local java = dofile(repo .. "/nvim/lua/config/java.lua")
@@ -125,11 +143,101 @@ check("both terminal and editor honor the theme file", function()
 		vim.fn.writefile({ mode }, state)
 		vim.env.DOTFILES_THEME = mode == "light" and "dark" or "light"
 		equal(require("config.theme").mode(), mode)
-		equal(
-			dofile(repo .. "/wezterm/wezterm.lua").color_scheme,
-			mode == "light" and "Catppuccin Latte" or "Catppuccin Macchiato"
-		)
+		equal(dofile(repo .. "/wezterm/wezterm.lua").color_scheme, mode == "light" and "rose-pine-dawn" or "rose-pine")
 	end
+end)
+check("missing or invalid theme state defaults to light but respects explicit dark", function()
+	local state = vim.env.XDG_CONFIG_HOME .. "/dotfiles-theme"
+	local theme = require("config.theme")
+	for _, contents in ipairs({ {}, { "invalid" } }) do
+		if #contents == 0 then
+			vim.fn.delete(state)
+		else
+			vim.fn.writefile(contents, state)
+		end
+		for _, env_mode in ipairs({ "", "invalid", "light", "dark" }) do
+			vim.env.DOTFILES_THEME = env_mode
+			local expected = env_mode == "dark" and "dark" or "light"
+			equal(theme.mode(), expected)
+			local terminal = dofile(repo .. "/wezterm/wezterm.lua")
+			equal(terminal.color_scheme, expected == "dark" and "rose-pine" or "rose-pine-dawn")
+			equal(terminal.set_environment_variables.COLORFGBG, expected == "dark" and "15;0" or "0;15")
+		end
+	end
+	vim.fn.writefile({ "dark" }, state)
+end)
+check("native appearance events follow auto and preserve manual overrides", function()
+	local state = vim.env.XDG_CONFIG_HOME .. "/dotfiles-theme"
+	vim.fn.writefile({ "auto" }, state)
+	vim.env.DOTFILES_THEME = "dark"
+	system_appearance = "Light"
+	local terminal = dofile(repo .. "/wezterm/wezterm.lua")
+	equal(terminal.color_scheme, "rose-pine-dawn")
+	equal(#wez_children, 0) -- Config evaluation must never spawn a synchronizer.
+	local overrides, appearance, override_calls = { font_size = 19 }, "LightHighContrast", 0
+	local window = {
+		get_appearance = function()
+			return appearance
+		end,
+		get_config_overrides = function()
+			return vim.deepcopy(overrides)
+		end,
+		set_config_overrides = function(_, value)
+			overrides = value
+			override_calls = override_calls + 1
+		end,
+	}
+	local event = assert(wez_events["window-config-reloaded"])
+	event(window)
+	equal(overrides.color_scheme, "rose-pine-dawn")
+	equal(overrides.font_size, 19)
+	equal(overrides.set_environment_variables.COLORFGBG, "0;15")
+	equal(#wez_children, 1)
+	event(window) -- Overrides re-emit this event; no loop or duplicate sync.
+	equal(override_calls, 1)
+	equal(#wez_children, 1)
+	appearance = "DarkHighContrast"
+	event(window)
+	equal(overrides.color_scheme, "rose-pine")
+	equal(overrides.set_environment_variables.DOTFILES_THEME, "dark")
+	equal(#wez_children, 2)
+	equal(wez_children[2][6], "dark")
+	vim.fn.writefile({ "light" }, state)
+	event(window)
+	equal(overrides.color_scheme, "rose-pine-dawn")
+	equal(#wez_children, 2)
+	vim.fn.writefile({ "dark" }, state)
+end)
+check("auto mode refreshes the focused editor after atomic state replacement", function()
+	local config = vim.env.XDG_CONFIG_HOME
+	local theme = require("config.theme")
+	vim.fn.writefile({ "auto" }, config .. "/dotfiles-theme")
+	vim.fn.writefile({ "light" }, config .. "/dotfiles-theme-system")
+	local observed = theme.mode()
+	equal(observed, "light")
+	theme.watch(function()
+		observed = theme.mode()
+	end)
+	vim.fn.writefile({ "dark" }, config .. "/theme-replacement")
+	assert(vim.uv.fs_rename(config .. "/theme-replacement", config .. "/dotfiles-theme-system"))
+	assert(
+		vim.wait(2000, function()
+			return observed == "dark"
+		end),
+		"Dark appearance was not observed"
+	)
+	vim.fn.writefile({ "light" }, config .. "/theme-replacement")
+	assert(vim.uv.fs_rename(config .. "/theme-replacement", config .. "/dotfiles-theme"))
+	assert(
+		vim.wait(2000, function()
+			return observed == "light"
+		end),
+		"Manual override was not observed"
+	)
+	theme.watcher:stop()
+	theme.watcher:close()
+	theme.watcher = nil
+	vim.fn.writefile({ "dark" }, config .. "/dotfiles-theme")
 end)
 print(string.format("%d checks, %d failures", checks, failures))
 if failures > 0 then

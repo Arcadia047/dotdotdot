@@ -37,7 +37,8 @@ Copy zsh/machine.example.zsh there to override the default Java version or PATH.
 The optional ~/.config/dotdotdot/Brewfile.local can declare machine-only packages.
 Neither local file is created, linked, or overwritten by bootstrap.
 The tracked theme.conf seeds machine-local ~/.config/dotfiles-theme.
-Switch WezTerm, tmux, and Neovim together with `theme light|dark`.
+Use `theme auto` to follow macOS, or `theme light|dark` for a fixed palette.
+Oh My Pi follows the terminal appearance; see README.md for its theme slots.
 EOF
 }
 
@@ -238,6 +239,11 @@ link_dotfiles() {
   link_item "$repo_root/.zshrc" "$HOME/.zshrc"
   link_item "$repo_root/.p10k.zsh" "$HOME/.p10k.zsh"
   initialize_theme
+  # OMP remains an optional machine-local harness. Link only its theme, never
+  # its config/auth/session directory. Settings stay under OMP's own authority.
+  if command -v omp >/dev/null 2>&1; then
+    link_item "$repo_root/omp/themes/dotdotdot-rose-pine-dawn.json" "${PI_CODING_AGENT_DIR:-$HOME/.omp/agent}/themes/dotdotdot-rose-pine-dawn.json"
+  fi
 }
 
 initialize_theme() {
@@ -248,7 +254,7 @@ initialize_theme() {
   else
     mode="$(cat "$repo_root/theme.conf")"
   fi
-  [[ "$mode" == dark || "$mode" == light ]] || die "Invalid theme in $file; expected dark or light."
+  [[ "$mode" == auto || "$mode" == dark || "$mode" == light ]] || die "Invalid theme in $file; expected auto, dark, or light."
   if [[ -f "$file" && ! -L "$file" ]]; then
     log "Already initialized: $file ($mode)"
     return
@@ -391,7 +397,9 @@ check_java() {
 
 check_theme() {
   local file="${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles-theme"
-  if [[ -f "$file" && ! -L "$file" ]] && [[ "$(cat "$file")" == dark || "$(cat "$file")" == light ]]; then
+  local selection
+  selection="$(cat "$file" 2>/dev/null)" || selection=''
+  if [[ -f "$file" && ! -L "$file" ]] && [[ "$selection" == auto || "$selection" == dark || "$selection" == light ]]; then
     check_ok "machine-local theme ($file)"
   else
     check_bad "machine-local theme ($file); run bootstrap to initialize or migrate the old symlink"
@@ -450,6 +458,9 @@ check_installation() {
   check_link "$repo_root/.zshrc" "$HOME/.zshrc"
   check_link "$repo_root/.p10k.zsh" "$HOME/.p10k.zsh"
   check_theme
+  if command -v omp >/dev/null 2>&1; then
+    check_link "$repo_root/omp/themes/dotdotdot-rose-pine-dawn.json" "${PI_CODING_AGENT_DIR:-$HOME/.omp/agent}/themes/dotdotdot-rose-pine-dawn.json"
+  fi
 
   check_submodules
   check_java
