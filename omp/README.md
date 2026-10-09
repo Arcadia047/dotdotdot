@@ -5,7 +5,9 @@
 to the official [Rosé Pine Dawn palette](https://rosepinetheme.com/palette/).
 It defines every required token in that version's
 [theme schema](https://github.com/can1357/oh-my-pi/blob/v18.4.1/packages/tui/src/theme/theme-schema.json).
-Text and tool output use Dawn's text color; secondary text uses subtle for
+The role values must match `theme/palette.tsv`; `tests/test_palette.py` checks
+all variables and every color/export reference so this packaged asset cannot
+drift silently. Text and tool output use Dawn's text color; secondary text uses subtle for
 readability on the light surfaces. Error panels use the overlay surface with
 Love accents rather than retaining the dark theme's hardcoded background.
 

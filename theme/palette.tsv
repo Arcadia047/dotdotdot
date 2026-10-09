@@ -1,0 +1,16 @@
+# Official Rosé Pine roles: role main dawn. Runtime palette authority.
+base	#191724	#faf4ed
+surface	#1f1d2e	#fffaf3
+overlay	#26233a	#f2e9e1
+muted	#6e6a86	#9893a5
+subtle	#908caa	#797593
+text	#e0def4	#464261
+love	#eb6f92	#b4637a
+gold	#f6c177	#ea9d34
+rose	#ebbcba	#d7827e
+pine	#31748f	#286983
+foam	#9ccfd8	#56949f
+iris	#c4a7e7	#907aa9
+highlight_low	#21202e	#f4ede8
+highlight_med	#403d52	#dfdad9
+highlight_high	#524f67	#cecacd

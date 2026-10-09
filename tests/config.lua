@@ -174,7 +174,8 @@ check("native appearance events follow auto and preserve manual overrides", func
 	local terminal = dofile(repo .. "/wezterm/wezterm.lua")
 	equal(terminal.color_scheme, "rose-pine-dawn")
 	equal(#wez_children, 0) -- Config evaluation must never spawn a synchronizer.
-	local overrides, appearance, override_calls = { font_size = 19 }, "LightHighContrast", 0
+	local overrides, appearance, override_calls =
+		{ font_size = 19, window_frame = { font_size = 11 } }, "LightHighContrast", 0
 	local window = {
 		get_appearance = function()
 			return appearance
@@ -191,6 +192,7 @@ check("native appearance events follow auto and preserve manual overrides", func
 	event(window)
 	equal(overrides.color_scheme, "rose-pine-dawn")
 	equal(overrides.font_size, 19)
+	equal(overrides.window_frame.font_size, 11)
 	equal(overrides.set_environment_variables.COLORFGBG, "0;15")
 	equal(#wez_children, 1)
 	event(window) -- Overrides re-emit this event; no loop or duplicate sync.
@@ -200,12 +202,35 @@ check("native appearance events follow auto and preserve manual overrides", func
 	event(window)
 	equal(overrides.color_scheme, "rose-pine")
 	equal(overrides.set_environment_variables.DOTFILES_THEME, "dark")
+	equal(overrides.colors.foreground, "#e0def4")
+	equal(overrides.command_palette_fg_color, "#e0def4")
 	equal(#wez_children, 2)
 	equal(wez_children[2][6], "dark")
 	vim.fn.writefile({ "light" }, state)
 	event(window)
 	equal(overrides.color_scheme, "rose-pine-dawn")
 	equal(#wez_children, 2)
+	vim.fn.writefile({ "dark" }, state)
+end)
+check("terminal text, selection and UI use the selected palette", function()
+	local state = vim.env.XDG_CONFIG_HOME .. "/dotfiles-theme"
+	for _, mode in ipairs({ "light", "dark", "light" }) do
+		vim.fn.writefile({ mode }, state)
+		local terminal = dofile(repo .. "/wezterm/wezterm.lua")
+		local text = mode == "light" and "#464261" or "#e0def4"
+		local base = mode == "light" and "#faf4ed" or "#191724"
+		local selected = mode == "light" and "#dfdad9" or "#403d52"
+		assert(terminal.colors, "terminal colors still depend on bundled scheme defaults")
+		equal(terminal.colors.foreground, text)
+		equal(terminal.colors.background, base)
+		equal(terminal.colors.selection_fg, text)
+		equal(terminal.colors.selection_bg, selected)
+		equal(terminal.colors.ansi[8], text)
+		equal(terminal.colors.brights[8], text)
+		equal(terminal.colors.tab_bar.inactive_tab.fg_color, text)
+		equal(terminal.command_palette_fg_color, text)
+		equal(terminal.window_frame.active_titlebar_bg, base)
+	end
 	vim.fn.writefile({ "dark" }, state)
 end)
 check("auto mode refreshes the focused editor after atomic state replacement", function()

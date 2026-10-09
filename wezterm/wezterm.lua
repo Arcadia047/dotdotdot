@@ -1,10 +1,14 @@
 local wezterm = require("wezterm")
 local config = wezterm.config_builder()
 local act = wezterm.action
+local theme = dofile(wezterm.config_dir .. "/theme.lua")
 
 -- Runtime selection is machine-local; bootstrap seeds it from theme.conf.
 local theme_file = (os.getenv("XDG_CONFIG_HOME") or (os.getenv("HOME") .. "/.config")) .. "/dotfiles-theme"
 wezterm.add_to_config_reload_watch_list(theme_file)
+wezterm.add_to_config_reload_watch_list(wezterm.config_dir .. "/../theme/palette.tsv")
+wezterm.add_to_config_reload_watch_list(wezterm.config_dir .. "/../theme/palette.lua")
+wezterm.add_to_config_reload_watch_list(wezterm.config_dir .. "/theme.lua")
 local function read_theme_selection()
 	local file = io.open(theme_file, "r")
 	if file then
@@ -51,6 +55,10 @@ config.font = wezterm.font({
 config.font_size = 20.0
 
 config.color_scheme = color_schemes[theme_mode]
+for option, value in pairs(theme.options(theme_mode)) do
+	config[option] = value
+end
+config.bold_brightens_ansi_colors = false
 config.set_environment_variables = {
 	DOTFILES_THEME = theme_mode,
 	-- OMP uses this fallback before its OSC 11 background query completes.
@@ -65,12 +73,15 @@ wezterm.on("window-config-reloaded", function(window)
 	local overrides = window:get_config_overrides() or {}
 	local colorfgbg = mode == "dark" and "15;0" or "0;15"
 	local environment = overrides.set_environment_variables or {}
+	local appearance_options = theme.options(mode)
 	if
 		overrides.color_scheme ~= color_schemes[mode]
 		or environment.DOTFILES_THEME ~= mode
 		or environment.COLORFGBG ~= colorfgbg
+		or not theme.matches(overrides, appearance_options)
 	then
 		overrides.color_scheme = color_schemes[mode]
+		theme.merge(overrides, appearance_options)
 		environment.DOTFILES_THEME = mode
 		environment.COLORFGBG = colorfgbg
 		overrides.set_environment_variables = environment

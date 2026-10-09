@@ -14,10 +14,9 @@ with tempfile.TemporaryDirectory(prefix='dotdotdot-tmux-theme-') as directory:
     root = Path(directory)
     config = root / 'config'
     config.mkdir()
-    (root / '.tmux').mkdir()
-    for name in ('plugins', 'theme.conf', 'navigation.conf', 'copy.conf'):
-        (root / '.tmux' / name).symlink_to(REPO / '.tmux' / name)
-    (root / 'zsh').symlink_to(REPO / 'zsh')
+    # Match bootstrap: .tmux is a whole-directory symlink, with no ~/zsh.
+    # A lexical '..' collapse would otherwise hide a broken helper path.
+    (root / '.tmux').symlink_to(REPO / '.tmux')
     (root / '.tmux.conf').symlink_to(REPO / '.tmux.conf')
     # Continuum deliberately omits its save hook when other servers exist.
     # Give only that process-list probe an isolated fixture view; never stop
@@ -64,6 +63,14 @@ fi
             assert ('#191724' if dark else '#faf4ed') in tmux('show', '-gqv', 'status-style')
             for key, value in (('DOTFILES_THEME', mode), ('COLORFGBG', '15;0' if dark else '0;15')):
                 assert tmux('show-environment', '-g', key) == key + '=' + value
+            text = '#e0def4' if dark else '#464261'
+            surface = '#1f1d2e' if dark else '#fffaf3'
+            selected = '#403d52' if dark else '#dfdad9'
+            for option, background in (('message-style', surface), ('message-command-style', surface),
+                                       ('mode-style', selected), ('menu-style', surface)):
+                style = tmux('show', '-gqv', option)
+                assert 'fg=' + text in style and 'bg=' + background in style, (option, style)
+            assert 'bg=' + ('#c4a7e7' if dark else '#286983') in tmux('show', '-gqv', 'menu-selected-style')
             imports = tmux('show', '-gqv', 'update-environment').split()
             assert 'DOTFILES_THEME' not in imports and 'COLORFGBG' not in imports, imports
             assert 'SSH_AUTH_SOCK' in imports and 'DOTFILES_THEME_BACKUP' in imports, imports

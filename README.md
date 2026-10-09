@@ -126,10 +126,28 @@ For a Java 17 project with jdtls on Java 25, install both JDKs and export the tw
 Automatic mode follows macOS appearance: Rosé Pine Dawn in light mode and
 Rosé Pine main in dark mode across WezTerm, tmux, Powerlevel10k, shell
 highlighting/suggestions, fzf, and Neovim (including its buffer tabs).
+The official [Rosé Pine roles](https://rosepinetheme.com/palette/) are stored in
+`theme/palette.tsv`: main is the dark column, Dawn is the light column.
+WezTerm, tmux, zsh/Powerlevel10k, and Neovim read these roles directly.
+The packaged OMP Dawn JSON is checked against them by `tests/test_palette.py`.
+WezTerm explicitly overrides its bundled schemes: their Dawn text and invisible
+selection background differ from this shared palette. It also colors host tabs,
+selection/search/copy highlights, command/character pickers, and window-frame
+fields. macOS still owns the native titlebar material and window buttons.
+
+ANSI indexes 0–7 map to overlay, love, foam, gold, pine, iris, rose, and text;
+8–15 repeat those roles with subtle for bright black. Bold does not change a
+WezTerm color to another ANSI slot. Neovim uses the same mapping for new terminal
+buffers. Its native terminal API snapshots ANSI colors at `TermOpen`, so existing
+terminal jobs retain their opening ANSI palette; reopen their terminal after a
+mode change if needed. Existing task processes are preserved.
+
 Tab completion inherits the same fzf palette. Tmux retains filled number/name
 blocks for each window, with a stronger accent for the active window. Neovim's
-Mason headers, database connection indicators, and debugger highlights also
-follow the selected palette.
+Mason headers, database connection indicators, debugger highlights, file-tree
+backgrounds, floating panels, and buffer tabs also follow the selected palette.
+File-type icons retain the installed devicons light/dark brand colors; their
+colors are intentionally separate from syntax and UI roles.
 `theme auto` enables system following; `theme light` and `theme dark` select a
 fixed palette until auto is enabled again. `theme` shows the current selection
 and, in auto mode, the resolved appearance. The shell prompt remains Powerlevel10k;
@@ -186,13 +204,28 @@ TPM's repository-name mapping would otherwise confuse these two `tmux` repos.
 1. Run `./scripts/check`, then `./bootstrap.sh --check`.
 2. Check `wezterm --version` and `wezterm show-keys --lua` after a terminal update.
 3. Run `python3 tests/navigation.py`. In WezTerm verify `Cmd-T/W` do nothing, `Cmd-Shift-P` opens the palette, and `Ctrl-T` still opens shell fzf. Test `Alt-r` resize mode and Escape on the desktop.
-4. Run `python3 tests/shell_completion.py` for real-key completion and pending-command theme checks, and `python3 tests/tmux_theme.py` for private-server palette and stale-client environment checks. In `theme auto`, change macOS appearance and check WezTerm, tmux, Neovim, and OMP; shell colors refresh at the next prompt or keystroke. Check that `theme light` / `theme dark` stay fixed through system changes, then return to `theme auto`. Switching must leave `git diff -- theme.conf wezterm/wezterm.lua` unchanged.
+4. Run `python3 tests/theme_palette.py` for real installed WezTerm config parsing and Neovim plugin palette checks (including focused auto transitions and manual overrides). Run `python3 tests/shell_completion.py` for real-key completion and pending-command theme checks, and `python3 tests/tmux_theme.py` for private-server palette and stale-client environment checks. In `theme auto`, change macOS appearance and check WezTerm, tmux, Neovim, and OMP; shell colors refresh at the next prompt or keystroke. Check that `theme light` / `theme dark` stay fixed through system changes, then return to `theme auto`. Switching must leave `git diff -- theme.conf wezterm/wezterm.lua` unchanged.
 5. Run `python3 tests/neovim_workflow.py` after editor workflow changes. It uses a private PTY and real installed plugins/LSPs with temporary fixtures/state. Automatic completion suggests open project names; `Ctrl-Space` requests broader LSP results and `Ctrl-x Ctrl-s` requests snippets. `Space r r` saves pending files in the current project before running. See [keybindings](KEYBINDINGS.md#neovim-completion-and-running).
 6. Open a Java project and check the attached jdtls client's `cmd_env.JAVA_HOME`, project runtime, completion, and a main-class debugger session. Repeat language acceptance only for tooling changed by an update.
 
 Use `./scripts/benchmark-startup` for repeated shell/editor startup measurements. It redirects transient state to a temporary directory, skips tmux auto-start, and preserves installed plugin data. Caches are warmed in the temporary directory. The shell measurement excludes machine-local interactive overrides; the report names that boundary. Compare medians on the same machine before considering performance changes.
 
 Plugin commits are recorded in `nvim/lazy-lock.json` and tmux submodules. Homebrew and Mason tool versions are not fully locked; installation consistency is not a promise of byte-for-byte reproducibility. Review upgrades intentionally and record the actual build plus acceptance results. Dated results in the design document describe earlier versions.
+
+## Palette consistency repair — 2026-10-08
+
+- Powerlevel10k's wizard had replaced role colors with fixed indexes. Restored
+  semantic prompt colors while keeping the selected prompt layout, and removed
+  the extra wizard-added prompt load. Completion labels and shell syntax accents
+  now use explicit role colors.
+- Added one shared palette, explicit WezTerm text/selection/UI colors, tmux
+  menu/popup/copy/prompt styles, and Neovim panel/bufferline/ANSI mappings.
+- A real Neovim focus-triggered transition exposed suppressed nested ColorScheme
+  hooks. The focus handler now permits those hooks, so plugin and terminal-default
+  colors repaint together. Existing terminal jobs keep their native color snapshot.
+- See the commands above for repeatable checks. CLI/config, private tmux, shell
+  PTY, and installed Neovim checks do not establish screenshot or OS-toggle
+  acceptance for an already-running OMP harness.
 
 ## Automatic appearance verification — 2026-10-03
 

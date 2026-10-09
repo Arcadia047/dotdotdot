@@ -1,5 +1,7 @@
 # Machine-local state shared by WezTerm, tmux, the shell, and Neovim.
 # Replace old symlinks atomically; never write theme state into the checkout.
+typeset -g _DOTDOTDOT_PALETTE_FILE="${${(%):-%x}:A:h}/../theme/palette.tsv"
+
 _dotdotdot_theme_selection() {
   local file="${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles-theme" mode
   [[ -r "$file" ]] && read -r mode < "$file"
@@ -45,21 +47,16 @@ _dotdotdot_load_theme_palette() {
   export DOTFILES_THEME
   export COLORFGBG="$([[ "$DOTFILES_THEME" == dark ]] && print '15;0' || print '0;15')"
   typeset -gA DOTDOTDOT_COLORS
-  if [[ "$DOTFILES_THEME" == dark ]]; then
-    DOTDOTDOT_COLORS=(
-      base '#191724' surface '#1f1d2e' overlay '#26233a'
-      muted '#6e6a86' subtle '#908caa' text '#e0def4'
-      love '#eb6f92' gold '#f6c177' rose '#ebbcba'
-      pine '#31748f' foam '#9ccfd8' iris '#c4a7e7'
-    )
-  else
-    DOTDOTDOT_COLORS=(
-      base '#faf4ed' surface '#fffaf3' overlay '#f2e9e1'
-      muted '#9893a5' subtle '#797593' text '#464261'
-      love '#b4637a' gold '#ea9d34' rose '#d7827e'
-      pine '#286983' foam '#56949f' iris '#907aa9'
-    )
-  fi
+  local role main dawn
+  DOTDOTDOT_COLORS=()
+  while read -r role main dawn; do
+    [[ "$role" != \#* && -n "$role" ]] || continue
+    if [[ "$DOTFILES_THEME" == dark ]]; then
+      DOTDOTDOT_COLORS[$role]="$main"
+    else
+      DOTDOTDOT_COLORS[$role]="$dawn"
+    fi
+  done < "$_DOTDOTDOT_PALETTE_FILE"
 }
 
 _dotdotdot_apply_shell_theme() {
@@ -69,6 +66,9 @@ _dotdotdot_apply_shell_theme() {
     typeset -gx _DOTDOTDOT_FZF_BASE_OPTS="${FZF_DEFAULT_OPTS:-}"
   fi
   export FZF_DEFAULT_OPTS="$_DOTDOTDOT_FZF_BASE_OPTS --color=bg:$DOTDOTDOT_COLORS[base],bg+:$DOTDOTDOT_COLORS[overlay],fg:$DOTDOTDOT_COLORS[text],fg+:$DOTDOTDOT_COLORS[text],hl:$DOTDOTDOT_COLORS[pine],hl+:$DOTDOTDOT_COLORS[pine],info:$DOTDOTDOT_COLORS[subtle],prompt:$DOTDOTDOT_COLORS[iris],pointer:$DOTDOTDOT_COLORS[rose],marker:$DOTDOTDOT_COLORS[love],spinner:$DOTDOTDOT_COLORS[iris],header:$DOTDOTDOT_COLORS[subtle],border:$DOTDOTDOT_COLORS[muted]"
+  zstyle ':completion:*:descriptions' format "%F{$DOTDOTDOT_COLORS[subtle]}-- %d --%f"
+  zstyle ':completion:*:messages' format "%F{$DOTDOTDOT_COLORS[iris]}-- %d --%f"
+  zstyle ':completion:*:warnings' format "%F{$DOTDOTDOT_COLORS[love]}-- no matches found --%f"
   if (( ${+ZSH_HIGHLIGHT_STYLES} )); then
     # Ordinary arguments follow the terminal foreground even while ZLE is idle
     # and WezTerm changes appearance underneath the pending command.
@@ -79,6 +79,25 @@ _dotdotdot_apply_shell_theme() {
     ZSH_HIGHLIGHT_STYLES[builtin]="fg=$DOTDOTDOT_COLORS[pine]"
     ZSH_HIGHLIGHT_STYLES[alias]="fg=$DOTDOTDOT_COLORS[pine]"
     ZSH_HIGHLIGHT_STYLES[function]="fg=$DOTDOTDOT_COLORS[pine]"
+    local kind
+    for kind in suffix-alias precommand autodirectory; do
+      ZSH_HIGHLIGHT_STYLES[$kind]="fg=$DOTDOTDOT_COLORS[pine],underline"
+    done
+    for kind in global-alias arg0; do
+      ZSH_HIGHLIGHT_STYLES[$kind]="fg=$DOTDOTDOT_COLORS[pine]"
+    done
+    for kind in globbing history-expansion; do
+      ZSH_HIGHLIGHT_STYLES[$kind]="fg=$DOTDOTDOT_COLORS[iris]"
+    done
+    for kind in command-substitution-delimiter process-substitution-delimiter back-quoted-argument-delimiter; do
+      ZSH_HIGHLIGHT_STYLES[$kind]="fg=$DOTDOTDOT_COLORS[iris]"
+    done
+    for kind in dollar-quoted-argument redirection; do
+      ZSH_HIGHLIGHT_STYLES[$kind]="fg=$DOTDOTDOT_COLORS[gold]"
+    done
+    for kind in rc-quote dollar-double-quoted-argument back-double-quoted-argument back-dollar-quoted-argument; do
+      ZSH_HIGHLIGHT_STYLES[$kind]="fg=$DOTDOTDOT_COLORS[foam]"
+    done
     ZSH_HIGHLIGHT_STYLES[path]='underline'
     ZSH_HIGHLIGHT_STYLES[single-quoted-argument]="fg=$DOTDOTDOT_COLORS[gold]"
     ZSH_HIGHLIGHT_STYLES[double-quoted-argument]="fg=$DOTDOTDOT_COLORS[gold]"

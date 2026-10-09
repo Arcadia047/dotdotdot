@@ -12,7 +12,7 @@ bash -n bootstrap.sh scripts/check scripts/use-wezterm-nightly
 for file in .zshrc .zprofile zsh/*.zsh; do /bin/zsh -n "$file"; done
 shellcheck bootstrap.sh scripts/check scripts/use-wezterm-nightly
 shfmt -d -i 2 bootstrap.sh scripts/check scripts/use-wezterm-nightly
-stylua --check nvim wezterm scripts/*.lua tests/*.lua
+stylua --check theme nvim wezterm scripts/*.lua tests/*.lua
 python3 -m unittest discover -s tests -p 'test_*.py' -v
 if [[ -d .git || -f .git ]]; then git diff --check; fi
 printf '%s\n' 'All repository checks passed. Run ./bootstrap.sh --check for this machine; see README.md for interactive acceptance.'
