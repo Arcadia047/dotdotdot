@@ -6,7 +6,8 @@ Ctrl-k/j moves backward/forward through tasks.** Neither requires a split.
 AeroSpace owns desktop focus with Alt-h/j/k/l. WezTerm hosts the terminal.
 
 A space between keys means a sequence: `Ctrl-a l` means press Ctrl-a, release,
-then press l. Neovim's leader is Space. Leader bindings start in normal mode.
+then press l. Neovim's leader is Space. Leader bindings start in normal mode
+unless a Visual mapping is listed.
 
 ## Focus and switching
 
@@ -125,7 +126,30 @@ arrived earlier. Reverse, multiline, and rectangular selections are supported.
 
 For keyboard selection, use `Ctrl-a [` to enter copy mode, `v` to start selecting,
 then `y` to copy and return to the application. `q` cancels without copying.
-Neovim keeps its own mouse selection and yank behavior.
+In Neovim source buffers, ordinary commands use local registers. System clipboard
+access has explicit leader bindings:
+
+| Command | Behavior |
+| --- | --- |
+| `y{motion}` / `yy` / Visual `y` | Yank locally; leave the system clipboard alone |
+| `d`, `c`, `x` and their variants | Save removed text locally; leave the system clipboard alone |
+| Normal `p` / `P` | Paste the local register after / before the cursor |
+| Visual `p` / `P` | Replace with the local register, preserving the source |
+| `Space y{motion}` / `Space yy` / Visual `Space y` | Copy to the system clipboard |
+| `Space p` (Normal / Visual) | Paste the system clipboard; Visual replacement preserves it |
+
+For example, `di(` saves function arguments locally, then `p` inserts them inside
+another empty pair of parentheses. A `Space y` copy survives subsequent edits
+and can be pasted with `Space p` or `Cmd-V`. `"0p` pastes the last local yank after
+a deletion. `Space y` is an operator: add a motion or press `y` again for a line.
+WezTerm's `Cmd-C/V` remains terminal selection/paste; use Neovim's Visual
+`Space y` to copy editor text. tmux's copy-mode `y` / Enter copies terminal output
+to the system clipboard. Outside copy mode, tmux passes the Space bindings to
+Neovim.
+
+Native explicit registers also work: `"+dd` (line to clipboard), `"+d{motion}`, or `"ad{motion}`
+(to named register `a`); counts work before or after the register prefix.
+`u`, `Ctrl-r`, counts, and `.` retain their normal editing behavior.
 
 ## Shell suggestions and completion
 
@@ -171,7 +195,9 @@ to the leader menu; Enter still opens files and toggles folders.
 PTY client into a private tmux server and the full Neovim configuration. It uses
 installed plugins and temporary config/state/cache directories. It covers buffer
 cycling without splits, unsaved edits, Neo-tree, modal escape, embedded terminals,
-copy mode, and task switching. Optional editor focus remains tested.
+copy mode, task switching, local registers and explicit clipboard mappings.
+Clipboard checks use a disposable provider installed before Neovim startup;
+the macOS clipboard remains untouched. Optional editor focus remains tested.
 It never attaches to an existing tmux session. `./scripts/check` covers the host
 key whitelist and the remaining configuration contracts.
 

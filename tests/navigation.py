@@ -59,13 +59,30 @@ def main():
         (config / "nvim").symlink_to(repo / "nvim", target_is_directory=True)
         env = dict(os.environ, TERM="xterm-256color", XDG_CONFIG_HOME=str(config),
                    XDG_DATA_HOME=str(data), XDG_STATE_HOME=str(root / "state"),
-                   XDG_CACHE_HOME=str(root / "cache"))
+                   XDG_CACHE_HOME=str(root / "cache"), NVIM_LOG_FILE=str(root / "nvim.log"))
         env.pop("TMUX", None)
         env.pop("TMUX_PANE", None)
         fixtures = root / "files"
         fixtures.mkdir()
         for name in ("one.txt", "two.txt", "three.txt"):
             (fixtures / name).write_text(name + "\n")
+        # Install before startup so full-config checks cannot touch macOS clipboard.
+        clipboard = root / "clipboard.lua"
+        clipboard.write_text('''
+_G.clipboard_check = { value = {{"system copy"}, "v"}, reads = 0, writes = 0 }
+vim.g.clipboard = {
+  name = "Disposable PTY clipboard",
+  copy = { ["+"] = function(lines, kind)
+    clipboard_check.value = {vim.deepcopy(lines), kind}
+    clipboard_check.writes = clipboard_check.writes + 1
+  end, ["*"] = function() error("Unexpected primary selection write") end },
+  paste = { ["+"] = function()
+    clipboard_check.reads = clipboard_check.reads + 1
+    return vim.deepcopy(clipboard_check.value)
+  end, ["*"] = function() error("Unexpected primary selection read") end },
+  cache_enabled = 0,
+}
+''')
         nav = repo / ".tmux/navigation.conf"
         tmux_config = root / "tmux.conf"
         body = f"source-file {shlex.quote(str(nav))}\n"
@@ -91,7 +108,8 @@ def main():
         try:
             pane = tmux("-f", str(tmux_config), "new-session", "-d", "-P", "-F", "#{pane_id}",
                         "-s", "qa", "-x", "160", "-y", "45", "-c", str(fixtures),
-                        shlex.join(["nvim", "--listen", rpc, "-i", "NONE", "one.txt", "two.txt", "three.txt"]))
+                        shlex.join(["nvim", "--cmd", "lua dofile(" + json.dumps(str(clipboard)) + ")",
+                                    "--listen", rpc, "-i", "NONE", "one.txt", "two.txt", "three.txt"]))
             first = tmux("display-message", "-p", "-t", pane, "#{window_id}")
             second = tmux("new-window", "-d", "-P", "-F", "#{window_id}", "-t", "qa", "/bin/bash --noprofile --norc")
             master, slave = pty.openpty()
@@ -128,6 +146,49 @@ def main():
                 eventually(condition, description)
                 print("PASS " + description, flush=True)
 
+            # Real PTY bytes exercise tmux dispatch, plugin hooks and leader maps.
+            command("enew")
+            lua('vim.api.nvim_buf_set_lines(0, 0, -1, false, {"source", "discard", "tail"})')
+            press(b"yyjddp")
+            check("Ordinary yank/delete/paste stay local through tmux and installed plugins",
+                  lambda: expr("getline(3)") == "discard" and
+                  lua('(clipboard_check.reads == 0 and clipboard_check.writes == 0) and 1 or 0') == "1")
+            command("bwipeout!")
+            command("enew")
+            lua('vim.api.nvim_buf_set_lines(0, 0, -1, false, {"source", "discard", "tail"})')
+            press(b" yyjdd p")
+            check("Space yy / Space p reach Neovim through tmux and preserve copied text",
+                  lambda: expr("getline(3)") == "source" and
+                  lua('(clipboard_check.writes == 1 and clipboard_check.reads > 0) and 1 or 0') == "1")
+            command("bwipeout!")
+            command("enew")
+            lua('vim.api.nvim_buf_set_lines(0, 0, -1, false, {"first(a, b)", "second()"})')
+            press(b"f(di(")
+            check("Function argument cut saves removed text locally",
+                  lambda: expr('getreg(\'"\')') == "a, b")
+            press(b"j0f(p")
+            check("Function arguments move locally without overwriting system copy",
+                  lambda: expr("getline(2)") == "second(a, b)" and
+                  lua('(clipboard_check.value[1][1] == "source" and clipboard_check.writes == 1) and 1 or 0') == "1")
+            command("bwipeout!")
+            command("enew")
+            lua('vim.api.nvim_buf_set_lines(0, 0, -1, false, {"replace", "again"})')
+            command('lua clipboard_check.value = {{"external copy"}, "v"}')
+            press(b"viw pjviw p")
+            check("Visual Space p can replace twice without copying removed text",
+                  lambda: expr("getline(1)") == "external copy" and expr("getline(2)") == "external copy" and
+                  lua('clipboard_check.writes == 1 and 1 or 0') == "1")
+            command("bwipeout!")
+            command("enew")
+            # WezTerm's Cmd-V supplies bracketed terminal paste, not a Vim mapping.
+            reads_before_paste = lua("clipboard_check.reads")
+            press(b"\x1b[200~cmd-v text\nsecond pasted line\x1b[201~")
+            check("Bracketed host paste reaches Neovim through tmux without copying back",
+                  lambda: expr("getline(1)") == "cmd-v text" and expr("getline(2)") == "second pasted line" and
+                  lua("clipboard_check.reads") == reads_before_paste and
+                  lua('clipboard_check.writes == 1 and 1 or 0') == "1")
+            command("bwipeout!")
+            command("buffer one.txt")
 
             # The user's everyday layout: several buffers, one editor window,
             # and one pane per tmux window. No split is needed for navigation.

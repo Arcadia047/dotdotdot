@@ -46,7 +46,8 @@ vim.opt.completeopt = { "menu", "menuone", "noselect" }
 vim.opt.inccommand = "split"
 vim.opt.confirm = true
 vim.opt.mouse = "a"
-vim.opt.clipboard = "unnamedplus"
+-- Keep native registers local; keymaps.lua exposes explicit clipboard commands.
+vim.opt.clipboard = ""
 vim.opt.cursorline = true
 vim.opt.list = true
 vim.opt.listchars = { tab = "» ", trail = "·", nbsp = "␣" }

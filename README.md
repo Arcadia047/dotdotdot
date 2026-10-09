@@ -55,6 +55,22 @@ It sends real key bytes through a PTY attached to a private tmux server and the 
 
 ## Terminal copying
 
+Neovim keeps ordinary `y`, `d`, `c`, `x`, and `p` in its local registers.
+`Space y{motion}` / `Space yy` and Visual `Space y` explicitly copy to the system
+clipboard; `Space p` pastes it. Deleting or changing text leaves that clipboard
+copy intact, while `di(` followed by `p` can move function arguments locally.
+Visual `p` / `P` and `Space p` preserve their source for repeated replacement.
+Native explicit register commands such as `"+dd` and `"add` remain available. See
+[keybindings](KEYBINDINGS.md#mouse-selection-and-clipboard) for the full behavior.
+`tests/registers.lua` checks real editor commands with an in-memory clipboard
+provider, preserving the real macOS clipboard.
+`tests/navigation.py` also sends the clipboard bindings through a private tmux
+PTY into the full installed Neovim configuration with a disposable provider.
+Verified on 2026-10-08: the repository gate, full tmux/Neovim navigation and
+clipboard acceptance (including bracketed host paste), seven tmux copy-mode
+checks, and installed WezTerm config parsing passed. Native macOS clipboard
+contents were left untouched; hardware `Cmd-C/V` gestures were not exercised.
+
 Mouse-drag terminal output, release, then press `y` or Enter to copy and exit
 tmux copy mode. `Cmd-V` then pastes into the application. `.tmux/copy.conf`
 refreshes the selected range at mouse release; otherwise a fast drag can copy

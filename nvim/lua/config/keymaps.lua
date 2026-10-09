@@ -1,5 +1,14 @@
 local map = vim.keymap.set
 
+-- Ordinary commands use local registers; clipboard access is deliberate.
+map({ "n", "x" }, "<leader>y", '"+y', { desc = "Copy to System Clipboard" })
+map("n", "<leader>p", '"+p', { desc = "Paste from System Clipboard" })
+map("x", "<leader>p", '"+P', { desc = "Replace from System Clipboard" })
+-- Native visual P preserves the source register for repeated replacement.
+for _, key in ipairs({ "p", "P" }) do
+	map("x", key, "P", { desc = "Replace Without Changing Source" })
+end
+
 map("n", "<Esc>", "<cmd>nohlsearch<cr>", { desc = "Clear Search Highlight" })
 require("config.navigation").setup()
 

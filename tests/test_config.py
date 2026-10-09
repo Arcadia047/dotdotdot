@@ -45,6 +45,10 @@ class Configuration(unittest.TestCase):
         print(self.run_command([NVIM, '--headless', '-u', 'NONE', '-i', 'NONE', '-n',
                                 '-l', str(REPO/'tests/config.lua')]))
 
+    def test_editor_local_registers_and_explicit_clipboard(self):
+        print(self.run_command([NVIM, '--headless', '-u', 'NONE', '-i', 'NONE', '-n',
+                                '-l', str(REPO/'tests/registers.lua')]))
+
     def test_first_use_tool_installer(self):
         print(self.run_command([NVIM, '--headless', '-u', 'NONE', '-i', 'NONE', '-n',
                                 '-l', str(REPO/'tests/tooling.lua')]))
