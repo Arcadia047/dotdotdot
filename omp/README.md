@@ -1,4 +1,37 @@
-# Oh My Pi theme
+# Oh My Pi integration
+
+## Images in tmux
+
+`zsh/omp.zsh` selects `PI_FORCE_IMAGE_PROTOCOL=sixel` for an `omp` launch when
+the attached client identifies as WezTerm, advertises SIXEL, and the tmux server
+reports `sixel_support=1`. The choice applies only to that child process. Explicit
+`PI_FORCE_IMAGE_PROTOCOL` values win; other terminals and direct launches keep
+OMP's own detection. The adapter queries the current pane's attached client each
+time rather than trusting an inherited `WEZTERM_PANE` marker.
+
+OMP 18.4.1 otherwise selects cursor-based Kitty graphics for WezTerm. Its tmux
+passthrough bypasses tmux's image grid, so pane scrolling/reflow can leave image
+fragments or paint over the status bar. SIXEL gives tmux ownership of image
+storage, clipping and redraw. Global passthrough stays enabled for other uses;
+enabling it alone does not solve image positioning.
+
+Existing shells need `source ~/.zshrc`, then OMP must be relaunched (save/exit and
+resume the session as usual). `command omp` bypasses the shell adapter.
+Already-running processes retain their launch environment. Keep
+`terminal.showImages: true` in OMP's settings. Do not force Kitty placeholders
+or change `TERM` to impersonate the outer terminal inside tmux.
+
+Run `python3 tests/terminal_images.py` for the installed OMP/private-tmux replay.
+It checks image redraw, window switching, copy-mode scrolling, split-pane reflow,
+image pixel content, and bounds relative to the pane/status bar. Add `--stream`
+to drive 60 streamed text blocks through OMP using a loopback-only fixture server.
+Repeat with `--stream --tall` for a source image taller than the viewport.
+It uses temporary state and a synthetic image without provider credentials or
+external model calls. The terminal's identity reply is simulated;
+native WezTerm pixel appearance remains a separate
+visual check. See [diagnosis and acceptance](../docs/omp-terminal-images.md).
+
+## Theme
 
 `dotdotdot-rose-pine-dawn.json` adapts Oh My Pi 18.4.1's bundled
 [dark-rose-pine theme](https://github.com/can1357/oh-my-pi/blob/v18.4.1/packages/tui/src/theme/defaults/dark-rose-pine.json)

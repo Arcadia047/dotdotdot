@@ -6,6 +6,7 @@ fi
 typeset -g _DOTDOTDOT_REPO_ROOT="${${(%):-%x}:A:h}"
 source "$_DOTDOTDOT_REPO_ROOT/zsh/env.zsh"
 source "$_DOTDOTDOT_REPO_ROOT/zsh/theme.zsh"
+source "$_DOTDOTDOT_REPO_ROOT/zsh/omp.zsh"
 unset _DOTDOTDOT_REPO_ROOT
 
 typeset -U path PATH fpath FPATH

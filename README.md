@@ -211,6 +211,16 @@ config. New shells/editors load the updated configuration; existing shells
 need `source ~/.zshrc`, and existing editors need to reload the theme plugin or
 restart after saving their buffers.
 
+For images inside WezTerm + tmux, the shell's `omp` launcher selects native
+SIXEL when the server and attached client support it. Tmux then owns image
+clipping and redraw during scrolling, window switches and pane resizing. This
+avoids OMP's cursor-based Kitty passthrough scattering fragments across the pane
+or status bar. Explicit protocol overrides win. Existing shells need
+`source ~/.zshrc` and a fresh OMP launch; `command omp` bypasses the adapter.
+Run `python3 tests/terminal_images.py --stream` after image-rendering changes, then check
+the native display. See [image diagnosis](docs/omp-terminal-images.md) for the
+reproduction, limits and acceptance steps.
+
 The tmux theme is loaded explicitly from the pinned Rosé Pine submodule before
 TPM loads session plugins. The legacy Catppuccin submodule is retained unused;
 TPM's repository-name mapping would otherwise confuse these two `tmux` repos.
