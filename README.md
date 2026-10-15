@@ -139,13 +139,17 @@ For a Java 17 project with jdtls on Java 25, install both JDKs and export the tw
 
 ## Theme state
 
+WezTerm uses `Maple Mono NL NFM`, with mono-width Nerd Font symbols and no
+ligatures. Install it with `brew install --cask font-maple-mono-nl-nf` (also in
+the Brewfile). `wezterm ls-fonts` should show the NFM font file as primary.
+
 Automatic mode follows macOS appearance: Rosé Pine Dawn in light mode and
 Rosé Pine main in dark mode across WezTerm, tmux, Powerlevel10k, shell
 highlighting/suggestions, fzf, and Neovim (including its buffer tabs).
 The official [Rosé Pine roles](https://rosepinetheme.com/palette/) are stored in
 `theme/palette.tsv`: main is the dark column, Dawn is the light column.
 WezTerm, tmux, zsh/Powerlevel10k, and Neovim read these roles directly.
-The packaged OMP Dawn JSON is checked against them by `tests/test_palette.py`.
+Both packaged OMP themes are checked against them by `tests/test_palette.py`.
 WezTerm explicitly overrides its bundled schemes: their Dawn text and invisible
 selection background differ from this shared palette. It also colors host tabs,
 selection/search/copy highlights, command/character pickers, and window-frame
@@ -177,6 +181,10 @@ WezTerm refreshes existing tmux sessions and their environments on each auto
 transition. Tmux resolves its startup environment from shared state and excludes
 theme variables from client environment imports, so an older shell cannot
 replace the selected mode when creating or attaching a session.
+Tmux also sets explicit foreground/background/cursor defaults and resets retained
+OSC 10/11/12 overrides through every pane’s output TTY, including hidden windows
+and full-screen applications. Background queries therefore follow the selected
+palette even when an attached client still has cached colors from the old mode.
 Neovim checks the shared mode once a second and on focus; shell
 colors and the prompt refresh at the next prompt or editing redraw. Ordinary
 arguments and paths inherit the terminal foreground, so they remain readable
@@ -195,15 +203,20 @@ old theme symlink is retained in `~/.dotfiles-backups/<timestamp>/` during migra
 
 Oh My Pi manages its own config/auth/sessions. Its native appearance detector
 follows the terminal background; `COLORFGBG` provides the matching startup
-fallback in WezTerm, tmux, and new shell processes. Bootstrap links only the
-custom theme when `omp` is installed. To select both slots once:
+fallback in WezTerm, tmux, and new shell processes. When `omp` is installed,
+bootstrap links the shared main and Dawn themes and selects both slots using
+OMP’s CLI. It preserves other settings, credentials, and sessions. The equivalent
+commands are:
 
 ```sh
 omp config set theme.light dotdotdot-rose-pine-dawn
-omp config set theme.dark dark-rose-pine
+omp config set theme.dark dotdotdot-rose-pine-main
 ```
 
-The tracked Dawn theme lives in `omp/themes/` and covers the OMP 18.4.1 theme
+Run `python3 tests/omp_themes.py` to verify both themes with the installed OMP
+renderer in disposable offline sessions.
+
+The tracked themes live in `omp/themes/` and cover the OMP 18.4.1 theme
 schema, including tool panels, Markdown/code, and the status line. See
 [omp/README.md](omp/README.md) for provenance and profile details. A running
 harness can adopt the slots through `/settings`; new launches read them from
@@ -230,7 +243,7 @@ TPM's repository-name mapping would otherwise confuse these two `tmux` repos.
 1. Run `./scripts/check`, then `./bootstrap.sh --check`.
 2. Check `wezterm --version` and `wezterm show-keys --lua` after a terminal update.
 3. Run `python3 tests/navigation.py`. In WezTerm verify `Cmd-T/W` do nothing, `Cmd-Shift-P` opens the palette, and `Ctrl-T` still opens shell fzf. Test `Alt-r` resize mode and Escape on the desktop.
-4. Run `python3 tests/theme_palette.py` for real installed WezTerm config parsing and Neovim plugin palette checks (including focused auto transitions and manual overrides). Run `python3 tests/shell_completion.py` for real-key completion and pending-command theme checks, and `python3 tests/tmux_theme.py` for private-server palette and stale-client environment checks. In `theme auto`, change macOS appearance and check WezTerm, tmux, Neovim, and OMP; shell colors refresh at the next prompt or keystroke. Check that `theme light` / `theme dark` stay fixed through system changes, then return to `theme auto`. Switching must leave `git diff -- theme.conf wezterm/wezterm.lua` unchanged.
+4. Run `python3 tests/terminal_colors.py` for OSC foreground/background/cursor replies across manual/auto switches, hidden panes, full-screen exit, and new windows. Run `python3 tests/theme_palette.py` for real installed WezTerm font/config parsing and Neovim plugin palette checks (including focused auto transitions and manual overrides). Run `python3 tests/shell_completion.py` for real-key completion and pending-command theme checks, and `python3 tests/tmux_theme.py` for private-server palette and stale-client environment checks. In `theme auto`, change macOS appearance and check WezTerm, tmux, Neovim, and OMP; shell colors refresh at the next prompt or keystroke. Check that `theme light` / `theme dark` stay fixed through system changes, then return to `theme auto`. Switching must leave `git diff -- theme.conf wezterm/wezterm.lua` unchanged.
 5. Run `python3 tests/neovim_workflow.py` after editor workflow changes. It uses a private PTY and real installed plugins/LSPs with temporary fixtures/state. Automatic completion suggests open project names; `Ctrl-Space` requests broader LSP results and `Ctrl-x Ctrl-s` requests snippets. `Space r r` saves pending files in the current project before running. See [keybindings](KEYBINDINGS.md#neovim-completion-and-running).
 6. Open a Java project and check the attached jdtls client's `cmd_env.JAVA_HOME`, project runtime, completion, and a main-class debugger session. Repeat language acceptance only for tooling changed by an update.
 

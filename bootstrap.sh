@@ -38,7 +38,7 @@ The optional ~/.config/dotdotdot/Brewfile.local can declare machine-only package
 Neither local file is created, linked, or overwritten by bootstrap.
 The tracked theme.conf seeds machine-local ~/.config/dotfiles-theme.
 Use `theme auto` to follow macOS, or `theme light|dark` for a fixed palette.
-Oh My Pi follows the terminal appearance; see README.md for its theme slots.
+Oh My Pi's default profile uses the shared light/dark themes when installed.
 EOF
 }
 
@@ -239,10 +239,17 @@ link_dotfiles() {
   link_item "$repo_root/.zshrc" "$HOME/.zshrc"
   link_item "$repo_root/.p10k.zsh" "$HOME/.p10k.zsh"
   initialize_theme
-  # OMP remains an optional machine-local harness. Link only its theme, never
-  # its config/auth/session directory. Settings stay under OMP's own authority.
+  configure_omp_themes
+}
+
+configure_omp_themes() {
+  # Use OMP's CLI for its two appearance slots, preserving all other settings.
+  # An unrelated named profile must not redirect the default-profile setup.
   if command -v omp >/dev/null 2>&1; then
+    link_item "$repo_root/omp/themes/dotdotdot-rose-pine-main.json" "${PI_CODING_AGENT_DIR:-$HOME/.omp/agent}/themes/dotdotdot-rose-pine-main.json"
     link_item "$repo_root/omp/themes/dotdotdot-rose-pine-dawn.json" "${PI_CODING_AGENT_DIR:-$HOME/.omp/agent}/themes/dotdotdot-rose-pine-dawn.json"
+    run env -u OMP_PROFILE omp config set theme.light dotdotdot-rose-pine-dawn
+    run env -u OMP_PROFILE omp config set theme.dark dotdotdot-rose-pine-main
   fi
 }
 
@@ -326,6 +333,21 @@ install_runtime_tools() {
 
 check_ok() {
   log "OK: $*"
+}
+
+check_omp_themes() {
+  local slot variant actual
+  command -v omp >/dev/null 2>&1 || return 0
+  for slot in light dark; do
+    if [[ "$slot" == light ]]; then variant=dawn; else variant=main; fi
+    check_link "$repo_root/omp/themes/dotdotdot-rose-pine-$variant.json" "${PI_CODING_AGENT_DIR:-$HOME/.omp/agent}/themes/dotdotdot-rose-pine-$variant.json"
+    actual="$(env -u OMP_PROFILE omp config get "theme.$slot" 2>/dev/null)" || actual=""
+    if [[ "$actual" == "dotdotdot-rose-pine-$variant" ]]; then
+      check_ok "OMP theme.$slot ($actual)"
+    else
+      check_bad "OMP theme.$slot (run bootstrap to select dotdotdot-rose-pine-$variant)"
+    fi
+  done
 }
 
 check_bad() {
@@ -458,9 +480,7 @@ check_installation() {
   check_link "$repo_root/.zshrc" "$HOME/.zshrc"
   check_link "$repo_root/.p10k.zsh" "$HOME/.p10k.zsh"
   check_theme
-  if command -v omp >/dev/null 2>&1; then
-    check_link "$repo_root/omp/themes/dotdotdot-rose-pine-dawn.json" "${PI_CODING_AGENT_DIR:-$HOME/.omp/agent}/themes/dotdotdot-rose-pine-dawn.json"
-  fi
+  check_omp_themes
 
   check_submodules
   check_java

@@ -16,6 +16,11 @@ theme_commands+=(
   set-option -g @dotdotdot_tab_number "$DOTDOTDOT_COLORS[highlight_med]" ';'
   set-option -g @dotdotdot_tab_active "$accent" ';'
   set-option -g @dotdotdot_tab_active_text "$active_text" ';'
+  # OSC 10/11 queries use pane defaults before the attached client's cached
+  # colors. Set both styles so active and inactive panes agree after a switch.
+  set-option -gw window-style "fg=$DOTDOTDOT_COLORS[text],bg=$DOTDOTDOT_COLORS[base]" ';'
+  set-option -gw window-active-style "fg=$DOTDOTDOT_COLORS[text],bg=$DOTDOTDOT_COLORS[base]" ';'
+  set-option -gw cursor-colour "$DOTDOTDOT_COLORS[text]" ';'
   set-option -g status-style "fg=$DOTDOTDOT_COLORS[subtle],bg=$DOTDOTDOT_COLORS[base]" ';'
   set-option -g message-style "fg=$DOTDOTDOT_COLORS[text],bg=$DOTDOTDOT_COLORS[surface],fill=$DOTDOTDOT_COLORS[surface]" ';'
   set-option -g message-command-style "fg=$DOTDOTDOT_COLORS[text],bg=$DOTDOTDOT_COLORS[surface],fill=$DOTDOTDOT_COLORS[surface]" ';'
@@ -30,4 +35,13 @@ theme_commands+=(
   set-option -g popup-border-style "fg=$DOTDOTDOT_COLORS[subtle],bg=$DOTDOTDOT_COLORS[base]" ';'
 )
 local tmux_binary="${commands[tmux]:-${HOMEBREW_PREFIX:-/opt/homebrew}/bin/tmux}"
-"$tmux_binary" "${theme_commands[@]}"
+"$tmux_binary" "${theme_commands[@]}" || return 1
+
+# Applications can retain their own OSC defaults, which override window-style.
+# Reset them through each pane's output TTY, including hidden/full-screen panes.
+# This writes terminal output, never keystrokes or shell commands into an app.
+local pane_tty
+while IFS= read -r pane_tty; do
+  [[ "$pane_tty" == /dev/* && -c "$pane_tty" && -w "$pane_tty" ]] || continue
+  { printf '\033]110\007\033]111\007\033]112\007' > "$pane_tty" } 2>/dev/null || true
+done < <("$tmux_binary" list-panes -a -F '#{pane_tty}')

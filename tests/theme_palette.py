@@ -42,6 +42,14 @@ return config
 ''')
         probe.flush()
         env['DOTDOTDOT_PALETTE_OUTPUT'] = str(root / 'colors.json')
+        fonts = subprocess.run([shutil.which('wezterm'), '--config-file', probe.name, 'ls-fonts'],
+                               env=dict(env, HOME=str(Path.home())), capture_output=True,
+                               text=True, timeout=20)
+        assert fonts.returncode == 0 and not fonts.stderr.strip(), fonts.stderr
+        primary = fonts.stdout.split('When Intensity=', 1)[0]
+        assert 'MapleMonoNL-NFM-Regular.ttf' in primary, primary
+        assert primary.index('MapleMonoNL-NFM-Regular.ttf') < primary.index('JetBrains Mono'), primary
+        print('PASS installed WezTerm uses Maple Mono NL NFM as its primary font', flush=True)
         for mode, text, base in (('light', '#464261', '#faf4ed'),
                                  ('dark', '#e0def4', '#191724'),
                                  ('light', '#464261', '#faf4ed')):

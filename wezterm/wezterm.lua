@@ -49,7 +49,7 @@ local color_schemes = {
 
 -- Font configuration
 config.font = wezterm.font({
-	family = "Maple Mono NF",
+	family = "Maple Mono NL NFM",
 	harfbuzz_features = { "calt=0" }, -- Disable ligatures
 })
 config.font_size = 20.0
