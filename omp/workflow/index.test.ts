@@ -242,3 +242,110 @@ test("default child launch stays in the actual named parent profile even when se
     for (const key of keys) { if (previous[key] === undefined) delete process.env[key]; else process.env[key] = previous[key]; }
   }
 });
+
+test("explicit skill sync exposes current immutable planning skills and companion paths to a fresh manager", async () => {
+  const h = fixture();
+  const upstream = join(h.root, "upstream-skills");
+  executeGit(h.root, ["init", "-b", "main", upstream]);
+  executeGit(upstream, ["config", "user.name", "Fixture"]); executeGit(upstream, ["config", "user.email", "fixture@example.invalid"]);
+  for (const name of ["ask-matt", "to-spec", "to-tickets"]) {
+    const folder = join(upstream, "skills", "engineering", name); mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, "SKILL.md"), `---\nname: ${name}\ndescription: Plan accepted local work.\n---\nRead [the companion](companion.md).\n`);
+    writeFileSync(join(folder, "companion.md"), `Original ${name} instructions.\n`);
+  }
+  executeGit(upstream, ["add", "."]); executeGit(upstream, ["commit", "-m", "Current planning skills"]);
+  registerWorkExtension(h.pi, { agentDir: h.agentDir, upstream });
+  shutdowns.push(() => h.events.get("session_shutdown")({}, h.ctx));
+  const absent = (await h.call("work_skills", { action: "status" })).details;
+  expect(absent.installed).toBe(false);
+  expect(absent.guide).toBeUndefined();
+  const synced = (await h.call("work_skills", { action: "sync" })).details;
+  expect(synced.guide.revision).toBe(executeGit(upstream, ["rev-parse", "HEAD"]));
+  expect(synced.guide.skills.map((skill: any) => skill.name)).toEqual(["ask-matt", "to-spec", "to-tickets"]);
+  expect(synced.guide.instructions).toContain(".scratch/<feature>/spec.md");
+  expect(synced.guide.instructions).toContain("work_submit");
+  expect(synced.guide.instructions).toMatch(/approval|approved/i);
+  expect(synced.guide.instructions).toMatch(/no Skill tool|not.*Skill tool/i);
+  for (const skill of synced.guide.skills) {
+    expect(readFileSync(skill.path, "utf8")).toContain(`name: ${skill.name}`);
+    const companion = join(synced.guide.root, "skills", "engineering", skill.name, "companion.md");
+    expect(synced.guide.companionPaths).toContain(companion);
+    expect(readFileSync(companion, "utf8")).toBe(`Original ${skill.name} instructions.\n`);
+  }
+  expect(existsSync(join(h.agentDir, "work", "jobs.sqlite"))).toBe(false);
+});
+
+test("skill commands expose the same stable planning guide and update it only after explicit sync", async () => {
+  const h = fixture();
+  const upstream = join(h.root, "upstream-skills");
+  executeGit(h.root, ["init", "-b", "main", upstream]);
+  executeGit(upstream, ["config", "user.name", "Fixture"]); executeGit(upstream, ["config", "user.email", "fixture@example.invalid"]);
+  const folder = join(upstream, "skills", "engineering", "to-spec"); mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, "SKILL.md"), "---\nname: to-spec\ndescription: Plan scoped work.\n---\nRead companion.md.\n");
+  writeFileSync(join(folder, "companion.md"), "Planning instructions one.\n");
+  executeGit(upstream, ["add", "."]); executeGit(upstream, ["commit", "-m", "Planning version one"]);
+  registerWorkExtension(h.pi, { agentDir: h.agentDir, upstream });
+  shutdowns.push(() => h.events.get("session_shutdown")({}, h.ctx));
+  const command = h.commands.get("work");
+  await command.handler("skills sync", h.ctx);
+  const first = JSON.parse(h.messages.at(-1).message.content);
+  const firstCompanion = first.guide.companionPaths.find((path: string) => path.endsWith("/companion.md"));
+  writeFileSync(join(folder, "companion.md"), "Planning instructions two.\n");
+  executeGit(upstream, ["commit", "-am", "Planning version two"]);
+  await command.handler("skills status", h.ctx);
+  expect(JSON.parse(h.messages.at(-1).message.content).guide).toEqual(first.guide);
+  expect((await h.call("work_skills", { action: "status" })).details.guide).toEqual(first.guide);
+  await command.handler("skills sync", h.ctx);
+  const second = JSON.parse(h.messages.at(-1).message.content);
+  expect(second.guide.revision).toBe(executeGit(upstream, ["rev-parse", "HEAD"]));
+  expect(second.guide.revision).not.toBe(first.guide.revision);
+  expect(readFileSync(firstCompanion, "utf8")).toBe("Planning instructions one.\n");
+  expect(readFileSync(second.guide.companionPaths.find((path: string) => path.endsWith("/companion.md")), "utf8")).toBe("Planning instructions two.\n");
+  writeFileSync(join(second.sourceDir, "local-change.txt"), "Preserve me.\n");
+  const dirty = (await h.call("work_skills", { action: "status" })).details;
+  expect(dirty.dirty).toBe(true);
+  expect(dirty.guide).toBeUndefined();
+  expect(dirty.message).toMatch(/clean checkout/);
+  expect(readFileSync(join(second.sourceDir, "local-change.txt"), "utf8")).toBe("Preserve me.\n");
+});
+
+test("local timeout settings accept positive safe integers and reject invalid values before queue creation", async () => {
+  const h = fixture();
+  const stateDir = join(h.agentDir, "work"); mkdirSync(stateDir, { recursive: true });
+  const local = join(stateDir, "config.json");
+  registerWorkExtension(h.pi, { agentDir: h.agentDir });
+  shutdowns.push(() => h.events.get("session_shutdown")({}, h.ctx));
+  for (const key of ["validationTimeoutMs", "workerTimeoutMs"]) {
+    for (const value of [0, -1, 0.5, Number.MAX_SAFE_INTEGER + 1, "1000"]) {
+      writeFileSync(local, JSON.stringify({ [key]: value }));
+      await expect(h.call("work_status")).rejects.toThrow(`${key} must be a positive safe integer`);
+      expect(existsSync(join(stateDir, "jobs.sqlite"))).toBe(false);
+    }
+  }
+  writeFileSync(local, '{"validationTimeoutMs":1500,"workerTimeoutMs":3500}');
+  expect((await h.call("work_status")).details.jobs).toEqual([]);
+});
+
+test("configured deadlines reach editing workers and actual validation through the public submit tool", async () => {
+  const h = fixture();
+  const skillsDir = join(h.root, "skills");
+  executeGit(h.root, ["init", "-b", "main", skillsDir]);
+  executeGit(skillsDir, ["config", "user.name", "Fixture"]); executeGit(skillsDir, ["config", "user.email", "fixture@example.invalid"]);
+  writeFileSync(join(skillsDir, "SKILL.md"), "---\nname: fixture\ndescription: Fixture instructions.\n---\nFollow scope.\n");
+  executeGit(skillsDir, ["add", "."]); executeGit(skillsDir, ["commit", "-m", "Skills"]);
+  const stateDir = join(h.agentDir, "work"); mkdirSync(stateDir, { recursive: true });
+  writeFileSync(join(stateDir, "config.json"), '{"validationTimeoutMs":30,"workerTimeoutMs":2000}');
+  const requests: import("./manager").WorkerRequest[] = [];
+  registerWorkExtension(h.pi, { agentDir: h.agentDir, skillsDir, worker: { async run(request) {
+    requests.push(request);
+    if (request.role === "implementer") { writeFileSync(join(request.cwd, "value"), "changed\n"); executeGit(request.cwd, ["commit", "-am", "Change"]); }
+    return { text: "Candidate", model: request.model, report: { revision: executeGit(request.cwd, ["rev-parse", "HEAD"]), verdict: "pass", findings: [] } };
+  } } });
+  shutdowns.push(() => h.events.get("session_shutdown")({}, h.ctx));
+  await h.call("work_submit", { jobs: [{ id: "deadline", repo: h.repo, branch: "feature/deadline", task: "Change value", acceptance: ["Value changed"], checks: [{ name: "delayed value", command: 'sleep 0.3; test "$(cat value)" = changed' }] }] });
+  for (let i = 0; i < 200 && !h.messages.length; i++) await Bun.sleep(10);
+  expect(requests[0]?.timeoutMs).toBe(2000);
+  expect((await h.call("work_status")).details.jobs[0].status).toBe("blocked");
+  const receipt = JSON.parse(readFileSync(join(stateDir, "results", "deadline.json"), "utf8"));
+  expect(receipt.checks[0]).toMatchObject({ status: "timed_out" });
+});

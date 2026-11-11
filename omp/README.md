@@ -49,6 +49,22 @@ Before starting jobs, use `/work skills status` and explicitly run
 default branch. Repeat the same explicit command to update; there is no fixed
 release tag. Dirty, detached, diverged or redirected sources are preserved and
 reported for inspection. A missing source blocks work with setup guidance.
+
+Both skill tools and slash commands return an immutable planning guide after
+observing a clean installed source: the exact revision, snapshot root, full skill
+inventory, absolute `SKILL.md` paths and `companionPaths`. A fresh manager can
+read the current router and planning instructions (such as `ask-matt`, `to-spec`
+and `to-tickets` when present) without native foreign-skill discovery. Use OMP's
+`read` tool on those paths; this adapter does not provide a Skill tool. Follow the
+target repository's local tracker conventions, obtain approval for the scope,
+acceptance criteria, checks, ticket dependencies and branches, then use
+`work_submit` for execution. The accepted local tracker default is
+`.scratch/<feature>/spec.md` and `.scratch/<feature>/issues/`; preserve any different
+approved repository locations. Guide snapshots live under `work/manager-guides`,
+separate from execution snapshots. Status captures local committed guidance
+without fetching; only explicit sync updates the source. Dirty sources remain
+inspectable but require a clean checkout before new guidance is captured.
+
 Every independent job or related-ticket campaign captures committed skill bodies
 and companion files at first work; repairs, checks and reviews reuse those exact
 recorded inputs. Later jobs see updates. The adapter translates upstream Skill
@@ -62,7 +78,7 @@ validation in the manager conversation. The manager-facing tools are:
 | `work_submit` | Queue a `jobs` array from the accepted plan and start background follow-through. |
 | `work_status` | Inspect queue state, target branch, candidate and blocker. |
 | `work_control` | Pause, reconcile/resume, or safely clean an owned workspace. |
-| `work_skills` | Inspect or explicitly sync skill source. |
+| `work_skills` | Discover planning guidance and exact skill paths, or explicitly sync the source. |
 
 Each submitted job has `task`, `repo`, `branch`, nonempty `acceptance` and
 `checks` (`name` and shell `command`), plus optional `id`, `kind`, `base`,
@@ -101,12 +117,23 @@ setting. Choose and assess a model with the [role guide](roles-and-capabilities.
 Optional machine-local `work/config.json` accepts only:
 
 ```json
-{"maxWorkers": 2, "repairLimit": 2, "skillsDir": "/absolute/path/to/current-skills"}
+{
+  "maxWorkers": 2,
+  "repairLimit": 2,
+  "validationTimeoutMs": 120000,
+  "workerTimeoutMs": 1800000,
+  "skillsDir": "/absolute/path/to/current-skills"
+}
 ```
 
-Omit it for two shared worker slots and two repair cycles. `maxWorkers` must be
-a positive safe integer; `repairLimit` a nonnegative safe integer. These limits
-apply across this profile's managed jobs and roles. Change configuration before
+Omit it for two shared worker slots, two repair cycles, a 120000 ms (two minute)
+limit for each actual check or independent review (including shared worker-slot
+waiting), and a 1800000 ms (30 minute) limit for each editing model assignment.
+`validationTimeoutMs` controls checks and independent reviews; `workerTimeoutMs`
+controls editing implementation, repair and integration assignments.
+`maxWorkers`, `validationTimeoutMs` and `workerTimeoutMs` must be positive safe
+integers; `repairLimit` must be a nonnegative safe integer. These limits apply
+across this profile's managed jobs and roles. Change configuration before
 opening the manager, or restart the session to apply new limits. `skillsDir` and
 the trusted launch variable `DOTDOTDOT_WORK_SKILLS_DIR` point to a clean local
 skills checkout; the environment variable takes precedence. They are not model
@@ -124,8 +151,8 @@ the locally configured provider route.
 Pause stops new dispatch while active workers can finish. Shutdown aborts owned
 worker processes and retains interrupted state. Reopen the same OMP profile and
 use explicit resume to reconcile recorded ownership, Git state and surviving work
-before retrying. Dirty or unknown work is retained and blocks automatic reuse;
-inspect the reported blocker and worktree. Cleanup removes only safely owned
+before retrying. Dirty or unknown work, including ignored files, is retained and
+blocks automatic reuse; inspect the reported blocker and worktree. Cleanup removes only safely owned
 completed workspaces and keeps evidence. This first delivery runs while its OMP
 session is alive; there is no unattended restart service or cross-laptop queue.
 Managed worker processes set `DOTDOTDOT_WORK_CHILD=1` to suppress nested manager

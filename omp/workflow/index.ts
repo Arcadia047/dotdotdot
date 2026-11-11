@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { WorkManager, type WorkerClient, type ModelSelection } from "./manager";
 import { OmpWorker } from "./rpc";
@@ -22,14 +22,17 @@ export interface WorkHost {
 interface Options { agentDir: string; worker?: WorkerClient; skillsDir?: string; upstream?: string }
 const help = "/work status | pause | resume [job-id] | cleanup <job-id> | skills status|sync | roles | role set <role> <model-selector> | role clear <role>\nSubmit an accepted plan through work_submit with self-contained tasks, acceptance criteria, checks, and explicit dependencies. Work continues while this OMP session is alive. Settings: <agent-dir>/work/config.json; skills require explicit /work skills sync.";
 
-function config(stateDir: string): { maxWorkers?: number; repairLimit?: number; skillsDir?: string } {
+function config(stateDir: string): { maxWorkers?: number; repairLimit?: number; validationTimeoutMs?: number; workerTimeoutMs?: number; skillsDir?: string } {
   const path = join(stateDir, "config.json");
   if (!existsSync(path)) return {};
   const value = JSON.parse(readFileSync(path, "utf8"));
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid local work configuration in ${path}.`);
-  for (const key of Object.keys(value)) if (!["maxWorkers", "repairLimit", "skillsDir"].includes(key)) throw new Error(`Unknown local work setting ${key} in ${path}.`);
+  for (const key of Object.keys(value)) if (!["maxWorkers", "repairLimit", "validationTimeoutMs", "workerTimeoutMs", "skillsDir"].includes(key)) throw new Error(`Unknown local work setting ${key} in ${path}.`);
   if (value.maxWorkers !== undefined && (!Number.isSafeInteger(value.maxWorkers) || value.maxWorkers < 1)) throw new Error("maxWorkers must be a positive safe integer.");
   if (value.repairLimit !== undefined && (!Number.isSafeInteger(value.repairLimit) || value.repairLimit < 0)) throw new Error("repairLimit must be a nonnegative safe integer.");
+  for (const key of ["validationTimeoutMs", "workerTimeoutMs"]) {
+    if (value[key] !== undefined && (!Number.isSafeInteger(value[key]) || value[key] < 1)) throw new Error(`${key} must be a positive safe integer.`);
+  }
   if (value.skillsDir !== undefined && (typeof value.skillsDir !== "string" || !isAbsolute(value.skillsDir) || value.skillsDir.includes("\0"))) throw new Error("skillsDir must be an absolute local path.");
   return value;
 }
@@ -46,6 +49,32 @@ export function registerWorkExtension(pi: WorkHost, options: Options): void {
   let closing = false;
   const roles = new RoleChoices(stateDir);
   const source = () => new SkillsSource({ stateDir, sourceDir: options.skillsDir ?? process.env.DOTDOTDOT_WORK_SKILLS_DIR ?? config(stateDir).skillsDir, upstream: options.upstream });
+  const managerSkills = (action: "status" | "sync") => {
+    const current = source();
+    const status = action === "sync" ? current.sync() : current.status();
+    if (!status.installed) return status;
+    if (status.dirty) return { ...status, message: "Preserve local source changes and restore a clean checkout before capturing current manager planning guidance. Existing job snapshots remain unchanged." };
+    // Keep guide identifiers separate from user-selected job/campaign IDs.
+    const snapshot = new SkillsSource({ stateDir: join(stateDir, "manager-guides"), sourceDir: current.sourceDir }).snapshot(`manager-guide-${status.revision}`);
+    const allPaths = (directory: string): string[] => readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name)).flatMap((entry) => {
+      const path = join(directory, entry.name);
+      return entry.isDirectory() ? allPaths(path) : entry.isFile() ? [path] : [];
+    });
+    const skillPaths = new Set(snapshot.skills.map((skill) => skill.path));
+    return { ...status, guide: { revision: snapshot.revision, root: snapshot.root, skills: snapshot.skills,
+      companionPaths: allPaths(snapshot.root).filter((path) => !skillPaths.has(path)),
+      instructions: [
+        "Root manager planning adapter: these are immutable committed inputs from the observed skills revision, available without preinstalled foreign skills.",
+        "Use the OMP read tool on the exact SKILL.md paths in this inventory; there is no Skill tool in this adapter. Resolve companion references from the skill's snapshot directory and use the exact companionPaths below.",
+        "Choose current router/planning skills from the inventory; ask-matt, to-spec and to-tickets are starting points when present. Follow the target repository's AGENTS.md and established local tracker/document conventions before proposing execution.",
+        "The accepted local tracker convention is .scratch/<feature>/spec.md for specs and .scratch/<feature>/issues/ for tickets; preserve any different approved locations in the target repository. Consult docs/agents/issue-tracker.md and docs/agents/triage-labels.md when present. Publishing to the local tracker means Markdown files, never remote issues or uploads.",
+        "Obtain user approval for actionable scope, acceptance criteria, validation commands, ticket dependencies and target/integration branches. Planning ready-for-agent is not runtime readiness.",
+        "After approval, call work_submit with the accepted self-contained jobs array or accessible local spec/ticket pointers. The runtime owns worker scheduling, worktrees, checks, review, repair and integration; do not replace it with unmanaged workers or inject passing evidence.",
+        "Status observes the installed local source without fetching. Use explicit work_skills sync or /work skills sync to update source; existing job/campaign snapshots stay unchanged.",
+        snapshot.instructions("work-manager"),
+      ].join("\n"),
+    } };
+  };
   const notify = (content: string, followThrough = false) => {
     if (!closing) pi.sendMessage({ customType: "work-manager", content, display: true }, followThrough ? { deliverAs: "followUp", triggerTurn: true } : undefined);
   };
@@ -65,7 +94,7 @@ export function registerWorkExtension(pi: WorkHost, options: Options): void {
     if (!manager) {
       const local = config(stateDir);
       manager = new WorkManager({ stateDir, worker: options.worker ?? new OmpWorker({ env: { PI_CODING_AGENT_DIR: options.agentDir, OMP_PROFILE: "default", PI_PROFILE: undefined } }), model: { provider: "", id: "" },
-        maxWorkers: local.maxWorkers, repairLimit: local.repairLimit, modelFor: selected,
+        maxWorkers: local.maxWorkers, repairLimit: local.repairLimit, validationTimeoutMs: local.validationTimeoutMs, workerTimeoutMs: local.workerTimeoutMs, modelFor: selected,
         instructions: (role, job) => {
           try { return source().snapshot(job.integrationTarget ?? job.id).instructions(role); }
           catch (error) { throw new Error(`${errorText(error)} Inspect /work skills status; use /work skills sync for explicit setup/update.`); }
@@ -105,7 +134,7 @@ export function registerWorkExtension(pi: WorkHost, options: Options): void {
     }
     return response(current.status());
   });
-  tool("work_skills", "Work skills", "Inspect current upstream skills or explicitly sync their source. Sync is an inbound update; active jobs retain immutable skill inputs. No model selection changes.", skills, "exec", async (params) => response(params.action === "sync" ? source().sync() : source().status()));
+  tool("work_skills", "Work skills", "Discover current immutable planning-skill paths and root manager guidance, or explicitly sync their source. Read returned SKILL.md/companion paths using OMP read. Existing job snapshots and model choices remain unchanged.", skills, "exec", async (params) => response(managerSkills(params.action)));
   pi.registerCommand("work", { description: "Manage local parallel work, skills and trusted role choices", handler: async (args, ctx) => {
     context(ctx);
     try {
@@ -116,7 +145,7 @@ export function registerWorkExtension(pi: WorkHost, options: Options): void {
       else if (action === "pause" && parts.length === 1) { getManager(ctx).pause(); notify("Work dispatch paused. Active workers may finish; /work resume explicitly continues."); }
       else if (action === "resume" && parts.length <= 2) { background(getManager(ctx).resume(sub)); notify("Work reconciliation/resume requested; inspect /work status for progress."); }
       else if (action === "cleanup" && parts.length === 2) { getManager(ctx).cleanup(sub!); notify(`Retained local evidence; cleaned safe owned workspace for ${sub}.`); }
-      else if (action === "skills" && parts.length === 2 && ["sync", "status"].includes(sub!)) notify(JSON.stringify(sub === "sync" ? source().sync() : source().status(), null, 2));
+      else if (action === "skills" && parts.length === 2 && ["sync", "status"].includes(sub!)) notify(JSON.stringify(managerSkills(sub as "status" | "sync"), null, 2));
       else if (action === "roles" && parts.length === 1) notify(JSON.stringify(roles.list(), null, 2));
       else if (action === "role" && sub === "set" && tail.length >= 2) {
         const [role, ...selector] = tail;
