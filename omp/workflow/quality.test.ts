@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkRepository } from "./jobs";
@@ -424,4 +424,22 @@ test("an interrupted check retains its owned identity and cannot be duplicated o
     await host.exited;
     if (pgid) { try { process.kill(-pgid, "SIGKILL"); } catch {} }
   }
+});
+
+test("a pending no-pid intent invalidates earlier readiness until explicitly reconciled", async () => {
+  const { job, stateDir } = fixture();
+  const gate = new QualityGate({ stateDir, worker: passingWorker, modelFor: () => model });
+  const prior = await gate.verify(job);
+  expect(prior.passed).toBe(true);
+  const directory = join(stateDir, "processes", job.id);
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, "interrupted-intent.json"), JSON.stringify({
+    version: 1, kind: "check", role: "check", jobId: job.id, cwd: job.worktree, revision: job.candidate,
+    planHash: prior.planHash, name: "content", command: job.checks[0]!.command,
+    status: "starting", ended: false, startedAt: new Date().toISOString(),
+  }));
+  expect(() => gate.assertCurrent(job, prior)).toThrow(/process|reconcil/);
+  const next = await gate.verify(job);
+  expect(next.disposition).toBe("blocked");
+  expect(next.checks).toHaveLength(0);
 });

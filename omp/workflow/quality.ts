@@ -130,6 +130,8 @@ export interface CheckProcessRecord {
   endedAt?: string;
   exitCode?: number | null;
   signal?: string | null;
+  /** Set by trusted recovery after observing that an interrupted group drained. */
+  interrupted?: boolean;
 }
 
 function writeProcessRecord(path: string, record: CheckProcessRecord): void {
@@ -224,20 +226,7 @@ export class QualityGate {
       result.failures.push("Accepted task, acceptance criteria and at least one named nonempty check command are required.");
       blocked = true;
     }
-    const processes = join(this.stateDir, "processes", input.id);
-    if (existsSync(processes)) {
-      for (const file of readdirSync(processes)) {
-        // Atomic replacement temporaries are not accepted as completed records.
-        if (!file.endsWith(".json")) continue;
-        try {
-          const record = JSON.parse(readFileSync(join(processes, file), "utf8")) as CheckProcessRecord;
-          if (record.ended !== true || record.status !== "ended") throw new Error("unsettled process");
-        } catch {
-          result.failures.push(`Interrupted or unknown check process record ${join(processes, file)} must be reconciled before another verification.`);
-          blocked = true;
-        }
-      }
-    }
+    try { this.assertSettledChecks(input); } catch (error) { result.failures.push(message(error)); blocked = true; }
     try {
       result.revision = executeGit(input.worktree, ["rev-parse", "HEAD"]);
       this.assertGit(input, result.revision);
@@ -251,9 +240,9 @@ export class QualityGate {
         const outcome = await this.runCheck(input, result, check, join(runDir, `check-${index}`));
         result.checks.push(outcome);
         result.failures.push(...outcome.failures);
-        if (["timed_out", "cancelled", "unavailable", "skipped"].includes(outcome.status)) blocked = true;
+        if (["timed_out", "cancelled", "unavailable", "skipped"].includes(outcome.status)) { blocked = true; break; }
       }
-      const reviews = await Promise.all((["spec", "standards"] as const).map((axis) => this.review(input, result, axis, runDir)));
+      const reviews = blocked ? [] : await Promise.all((["spec", "standards"] as const).map((axis) => this.review(input, result, axis, runDir)));
       for (const review of reviews) {
         result.reviews.push(review.result);
         result.failures.push(...review.result.failures);
@@ -288,6 +277,7 @@ export class QualityGate {
       result.branch !== job.branch || result.worktree !== job.worktree || result.commonDir !== job.commonDir || !nonempty(result.revision)) {
       throw new Error("Quality evidence is failed, incomplete or stale for the accepted job and plan.");
     }
+    this.assertSettledChecks(job);
     this.assertGit(job, result.revision);
     if (!Array.isArray(result.checks) || result.checks.length !== job.checks.length || !Array.from(result.checks).every((check, index) =>
       check && check.name === job.checks[index]!.name && check.command === job.checks[index]!.command && check.status === "passed" &&
@@ -298,7 +288,8 @@ export class QualityGate {
     if (!Array.isArray(result.reviews) || result.reviews.length !== 2 || !(["spec", "standards"] as const).every((axis) =>
       result.reviews.filter((review) => review?.axis === axis).length === 1 && result.reviews.some((review) => {
         if (review?.axis !== axis || review.status !== "passed" || review.revision !== result.revision || review.planHash !== result.planHash ||
-          !Array.isArray(review.failures) || review.failures.length || !nonempty(review.evidenceFile)) return false;
+          !Array.isArray(review.failures) || review.failures.length || !nonempty(review.evidenceFile) ||
+          !nonempty(review.model?.provider) || !nonempty(review.model?.id)) return false;
         const report = parseReport(review.report, result.revision);
         return report.findings.every((finding) => finding.severity !== "blocking");
       }))) {
@@ -327,6 +318,21 @@ export class QualityGate {
     const rel = relative(this.stateDir, actual);
     if (!rel || rel.startsWith("..") || isAbsolute(rel)) throw new Error("Quality evidence must belong to this gate's state directory.");
     return actual;
+  }
+
+  private assertSettledChecks(job: Job): void {
+    const directory = join(this.stateDir, "processes", job.id);
+    if (!existsSync(directory)) return;
+    for (const file of readdirSync(directory)) {
+      if (!file.endsWith(".json")) continue;
+      try {
+        const record = JSON.parse(readFileSync(join(directory, file), "utf8")) as CheckProcessRecord;
+        if (record.version !== 1 || record.kind !== "check" || record.role !== "check" || record.jobId !== job.id ||
+          record.cwd !== job.worktree || record.ended !== true || record.status !== "ended") throw new Error("unsettled process");
+      } catch {
+        throw new Error(`Interrupted or unknown check process record ${join(directory, file)} must be reconciled before verification or readiness.`);
+      }
+    }
   }
 
   private assertGit(job: Job, revision: string): void {
