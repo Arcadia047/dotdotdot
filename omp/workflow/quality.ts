@@ -328,7 +328,7 @@ export class QualityGate {
       try {
         const record = JSON.parse(readFileSync(join(directory, file), "utf8")) as CheckProcessRecord;
         if (record.version !== 1 || record.kind !== "check" || record.role !== "check" || record.jobId !== job.id ||
-          record.cwd !== job.worktree || record.ended !== true || record.status !== "ended") throw new Error("unsettled process");
+          !nonempty(record.cwd) || !isAbsolute(record.cwd) || record.ended !== true || record.status !== "ended") throw new Error("unsettled process");
       } catch {
         throw new Error(`Interrupted or unknown check process record ${join(directory, file)} must be reconciled before verification or readiness.`);
       }

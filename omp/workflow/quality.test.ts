@@ -443,3 +443,15 @@ test("a pending no-pid intent invalidates earlier readiness until explicitly rec
   expect(next.disposition).toBe("blocked");
   expect(next.checks).toHaveLength(0);
 });
+
+test("completed checks from a ticket worktree permit fresh verification in its integration worktree", async () => {
+  const { root, job, stateDir } = fixture();
+  const gate = new QualityGate({ stateDir, worker: passingWorker, modelFor: () => model });
+  expect((await gate.verify(job)).passed).toBe(true);
+  const integrated = { ...job, branch: "feature/integrated", worktree: join(root, "integrated") };
+  git(job.repo, "worktree", "add", "-b", integrated.branch, integrated.worktree, job.candidate!);
+  const result = await gate.verify(integrated);
+  expect(result.failures).toEqual([]);
+  expect(result.passed).toBe(true);
+  expect(() => gate.assertCurrent(integrated, result)).not.toThrow();
+});
