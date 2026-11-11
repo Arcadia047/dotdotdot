@@ -1,6 +1,6 @@
 # Parallel work with OMP: research and proposed adoption
 
-Researched 2026-11-11. This is a proposal, not an installed workflow. Only this research document was added; runtime configuration, skills, credentials, sessions, and existing working changes were left alone. The work laptop was not inspected.
+Researched 2026-11-11. This document preserves the research and accepted design from before implementation. The opt-in runtime is now described in [OMP usage](../omp/README.md); actual acceptance evidence and limits are recorded in the [build verification](../.scratch/omp-workflow/verification.md). The work laptop was not inspected, and its credentials, settings, and artifacts remain local.
 
 Updated after user clarification: skills should receive upstream updates without a fixed version requirement; work code, traces, and other artifacts cannot be uploaded here or to GitHub; independent jobs must be able to work in the same repository on different branches. Source revisions in this document identify the evidence inspected, not an installation pin.
 

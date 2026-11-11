@@ -2,7 +2,7 @@
 
 This document defines what each role must deliver and how to assess a model for that role. It contains no model names, provider preferences, fixed context-window sizes, or model configuration list. Use it with whichever catalog and model access are available on the machine doing the work.
 
-This is the role contract for the [proposed parallel workflow](../docs/omp-agentic-workflow-research.md), not an installed agent system or a claim that any model has passed the assessments below.
+This is the role contract for the [parallel workflow](README.md). The [research](../docs/omp-agentic-workflow-research.md) records its design context. Runtime acceptance does not establish that any model has passed the capability assessments below; evaluate the chosen models in the environment doing the work.
 
 ## How to use this guide
 
