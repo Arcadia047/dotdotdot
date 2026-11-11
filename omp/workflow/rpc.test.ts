@@ -1,15 +1,15 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { OmpWorker, WorkerError } from "./rpc";
+import { OmpWorker, WorkerError, type OmpWorkerOptions } from "./rpc";
 
 const roots: string[] = [];
-function fixture(scenario = "success") {
+function fixture(scenario = "success", options: OmpWorkerOptions = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "omp-rpc-test-")));
   roots.push(root);
   const worker = new OmpWorker({ command: [process.execPath, join(import.meta.dir, "fixtures/rpc-worker.ts")],
-    env: { RPC_FIXTURE_SCENARIO: scenario }, defaultTimeoutMs: 1000, killGraceMs: 50 });
+    env: { RPC_FIXTURE_SCENARIO: scenario }, defaultTimeoutMs: 1000, killGraceMs: 50, ...options });
   return { root, worker, request: { cwd: root, model: { provider: "host-route", id: "chosen/model", thinking: "high" },
     prompt: "Complete the assignment", sessionDir: join(root, "sessions") } };
 }
@@ -72,4 +72,47 @@ test("cancelling a worker terminates its owned process tree and preserves stderr
   expect(descendant).toBeGreaterThan(0);
   await Bun.sleep(50);
   expect(() => process.kill(descendant, 0)).toThrow();
+});
+
+test("corrupt UTF-8 cannot silently become replacement characters in RPC evidence", async () => {
+  const { worker, request } = fixture("invalid-utf8");
+  await expect(worker.run(request)).rejects.toThrow(/Invalid OMP RPC stdout/);
+});
+
+test("a local slash command is not successful model work", async () => {
+  const { worker, request } = fixture("local");
+  await expect(worker.run(request)).rejects.toThrow(/without invoking a model/);
+});
+
+test("a yielded prompt with asynchronous follow-up work waits for actual settlement", async () => {
+  const { worker, request } = fixture("async-settle");
+  const result = await worker.run(request);
+  expect(JSON.parse(result.text).stateCount).toBe(2);
+});
+
+test.each(["v1-overflow", "huge-frame"])("%s reports a transport limit instead of incomplete text", async (scenario) => {
+  const { worker, request } = fixture(scenario);
+  await expect(worker.run(request)).rejects.toThrow(/transport limit/);
+});
+
+test("an oversized prompt is rejected instead of splitting an unsupported inbound frame", async () => {
+  const { worker, request } = fixture();
+  await expect(worker.run({ ...request, prompt: "x".repeat(1024 * 1024) })).rejects.toThrow(/input frame exceeded/);
+});
+
+test("stderr output remains bounded on a flooding failed worker", async () => {
+  const { worker, request } = fixture("huge-stderr", { maxOutputBytes: 4096 });
+  try { await worker.run(request); throw new Error("Expected output limit failure"); }
+  catch (error) {
+    expect((error as WorkerError).code).toBe("output");
+    expect(statSync((error as WorkerError).stderrFile!).size).toBe(4096);
+  }
+});
+
+test("pre-cancelled work never spawns or creates session artifacts", async () => {
+  const { worker, request } = fixture();
+  let spawned = false;
+  await expect(worker.run({ ...request, signal: AbortSignal.abort(), onSpawn: () => { spawned = true; } })).rejects.toThrow(/cancelled before spawn/);
+  expect(spawned).toBe(false);
+  expect(existsSync(request.sessionDir)).toBe(false);
 });

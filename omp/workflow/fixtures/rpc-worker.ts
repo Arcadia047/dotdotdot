@@ -20,6 +20,7 @@ if (scenario === "no-ready") await hang();
 if (scenario === "exit") { process.stderr.write("Fixture startup failed\n"); process.exit(23); }
 if (scenario === "bad-json") { process.stdout.write("not json\n"); await hang(); }
 if (scenario === "chunk") { send({ type: "rpc_chunk", chunkId: "1", index: 0, count: 1, byteLength: 2, data: "e30=" }); await hang(); }
+if (scenario === "invalid-utf8") process.stdout.write(Buffer.concat([Buffer.from('{"type":"fixture","text":"'), Buffer.from([0xff]), Buffer.from('"}\n')]));
 send({ type: "ready", protocolVersion: 1, maxFrameBytes: 1048576 });
 for await (const line of createInterface({ input: process.stdin })) {
   const request = JSON.parse(line);
@@ -35,8 +36,8 @@ for await (const line of createInterface({ input: process.stdin })) {
     respond({ toolNames: ["finish_report"] });
   } else if (request.type === "prompt") {
     promptId = request.id;
-    respond();
-    if (scenario === "local") { send({ type: "response", id: request.id, command: "prompt", success: true, data: { agentInvoked: false } }); await hang(); }
+    respond(scenario === "local" ? { agentInvoked: false } : undefined);
+    if (scenario === "local") await hang();
     if (scenario === "report" || scenario === "report-only") {
       if (!reportRegistered) process.exit(41);
       send({ type: "host_tool_call", id: "host-request-1", toolCallId: "different-model-call-1", toolName: "finish_report", arguments: { verdict: "blocked", findings: ["Planted defect"] } });
@@ -52,6 +53,7 @@ for await (const line of createInterface({ input: process.stdin })) {
     }
     if (scenario === "aborted" || scenario === "error") { send({ type: "prompt_result", id: promptId, agentInvoked: true, status: scenario, error: "Fixture failure" }); await hang(); }
     if (scenario === "early-settled") { send({ type: "prompt_result", id: promptId, agentInvoked: true, status: "completed", sessionSettled: true }); await hang(); }
+    if (scenario === "async-settle") { send({ type: "prompt_result", id: promptId, agentInvoked: true, status: "completed", sessionSettled: false }); await Bun.sleep(70); send({ type: "session_settled" }); continue; }
     if (scenario === "late-error") { send({ type: "response", id: promptId, command: "prompt", success: false, error: "Late provider failure" }); await hang(); }
     await Bun.sleep(30);
     finish();
@@ -60,6 +62,9 @@ for await (const line of createInterface({ input: process.stdin })) {
     if (scenario === "report-only") await hang();
     finish();
   } else if (request.type === "get_last_assistant_text") {
+    if (scenario === "v1-overflow") { send({ type: "response", id: request.id, command: request.type, success: false, error: "RPC response exceeded the transport limit" }); continue; }
+    if (scenario === "huge-frame") { respond({ text: "x".repeat(1024 * 1024) }); continue; }
+    if (scenario === "huge-stderr") process.stderr.write("x".repeat(1024 * 1024));
     respond({ text: JSON.stringify({ cwd: process.cwd(), args, child: process.env.DOTDOTDOT_WORK_CHILD, stateCount, reportRegistered }) });
   } else respond();
 }

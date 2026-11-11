@@ -19,6 +19,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--omp', default=shutil.which('omp'))
     parser.add_argument('--bun', default=shutil.which('bun'))
+    parser.add_argument('--role', choices=('spec-reviewer', 'implementer'), default='spec-reviewer')
     args = parser.parse_args()
     if not args.omp or not args.bun:
         parser.error('Both omp and bun must be installed')
@@ -91,7 +92,7 @@ export default function(pi) {
                PI_CONFIG_DIR=str(root / 'config'), XDG_CONFIG_HOME=str(root / 'xdg'),
                XDG_CACHE_HOME=str(root / 'cache'), XDG_STATE_HOME=str(root / 'state'),
                TMPDIR=str(root), TERM='dumb')
-    command = [args.bun, str(Path(__file__).with_suffix('.ts')), str(root), args.omp]
+    command = [args.bun, str(Path(__file__).with_suffix('.ts')), str(root), args.omp, args.role]
     (root / 'launch.json').write_text(json.dumps(dict(command=command, env=env), indent=2))
     try:
         completed = subprocess.run(command, env=env, text=True, capture_output=True, timeout=45)
@@ -102,7 +103,12 @@ export default function(pi) {
         assert len(requests) == 2, requests
         assert all(r['path'] == '/v1/chat/completions' and r['model'] == 'fixture' for r in requests)
         assert 'finish_report' in requests[0]['tools'], requests
-        assert not ({'task', 'eval', 'write', 'edit', 'bash'} & set(requests[0]['tools'])), requests
+        tools = set(requests[0]['tools'])
+        assert not ({'task', 'eval'} & tools), requests
+        if args.role == 'spec-reviewer':
+            assert not ({'write', 'edit', 'bash'} & tools), requests
+        else:
+            assert {'write', 'edit', 'bash'} <= tools, requests
         print(completed.stdout.strip())
     finally:
         server.shutdown()

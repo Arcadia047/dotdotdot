@@ -155,7 +155,7 @@ export class OmpWorker {
         let end: number;
         while ((end = buffer.indexOf(10)) !== -1) {
           if (end + 1 > frameLimit) throw new Error("RPC stdout frame exceeded transport limit");
-          const line = buffer.subarray(0, end).toString("utf8");
+          const line = new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, end));
           buffer = buffer.subarray(end + 1);
           if (line.trim()) receive(JSON.parse(line));
         }

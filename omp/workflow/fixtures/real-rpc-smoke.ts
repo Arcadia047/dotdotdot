@@ -7,7 +7,7 @@ const root = process.argv[2];
 const worker = new OmpWorker({ command: [process.argv[3]], defaultTimeoutMs: 30000,
   extraArgs: ["--no-extensions", "--extension", join(root, "probe.ts"), "--no-skills", "--no-rules", "--no-context-files", "--no-lsp", "--no-pty", "--no-title"] });
 const result = await worker.run({ cwd: join(root, "cwd"), sessionDir: join(root, "sessions"),
-  role: "spec-reviewer", model: { provider: "rpc-fixture", id: "fixture", thinking: "off" },
+  role: process.argv[4] ?? "spec-reviewer", model: { provider: "rpc-fixture", id: "fixture", thinking: "off" },
   prompt: "Call finish_report with the requested report, then return the report as JSON.",
   reportSchema: { type: "object", properties: { verdict: { type: "string" }, summary: { type: "string" } }, required: ["verdict", "summary"], additionalProperties: false } });
 const report = { verdict: "blocked", summary: "Loopback fixture planted defect" };
