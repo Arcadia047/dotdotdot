@@ -10,6 +10,8 @@ The first view answers **what needs me now?** Show actionable blocked/interrupte
 
 Each job exposes its repository, branch, candidate, stage, attempts, dependencies and last update. Details reveal the original blocker, accepted task, check and separate review outcomes, and local evidence/workspace paths. Historical or unavailable evidence is identified clearly. Long details remain collapsed by default. Search/filtering and a selected-job detail view work with keyboard and narrow screens.
 
+For related tickets, show branch validation and integration validation as separate scopes with their own branch/revision. An earlier branch pass must not stand in for the failed integration outcome. Waiting labels distinguish unresolved prerequisites from paused dispatch or worker capacity. Delayed manager control failures remain visible inside an open job detail view.
+
 The browser can pause dispatch, resume dispatch, or explicitly resume one blocked/interrupted job through the existing manager guards. It cannot submit arbitrary code/commands, rewrite acceptance, mark work ready, delete worktrees, or publish. Controls have pending/error states and do not claim success before acceptance. Normal status updates and completion notices stay short and point to details.
 
 ## Runtime constraints

@@ -1,6 +1,15 @@
 import type { JobStatus } from "./types";
 
 export type DashboardBucket = "attention" | "active" | "waiting" | "ready" | "archived";
+export interface DashboardEvidence {
+  available: boolean;
+  current: boolean;
+  revision?: string;
+  branch?: string;
+  receiptFile?: string;
+  checks: { name: string; status: string; exitCode: number | null }[];
+  reviews: { axis: "spec" | "standards"; status: string; verdict?: string }[];
+}
 export interface DashboardJob {
   id: string;
   title: string;
@@ -22,14 +31,8 @@ export interface DashboardJob {
   blocker?: string;
   attention?: { reason: string; nextAction: string };
   canResume: boolean;
-  evidence: {
-    available: boolean;
-    current: boolean;
-    revision?: string;
-    receiptFile?: string;
-    checks: { name: string; status: string; exitCode: number | null }[];
-    reviews: { axis: "spec" | "standards"; status: string; verdict?: string }[];
-  };
+  evidence: DashboardEvidence;
+  integrationEvidence?: DashboardEvidence;
 }
 export interface DashboardSnapshot {
   version: 1;
