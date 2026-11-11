@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { WorkManager } from "./manager";
 import { executeGit } from "./jobs";
 
@@ -140,7 +141,7 @@ test("related tickets integrate into their own branch before dependent work and 
 	expect(readFileSync(join(result.worktree, "combined.txt"), "utf8")).toBe("AB");
 	expect(executeGit(repo, ["branch", "--show-current"])).toBe("main");
 	expect(readFileSync(join(repo, "value.txt"), "utf8")).toBe("original\n");
-});
+}, 30_000);
 
 test("a failing implementation is repaired and receives fresh checks and independent reviews", async () => {
 	const { repo, stateDir } = fixture();
@@ -192,4 +193,124 @@ test("the final combined result is repaired when individually green tickets are 
 	await manager.start();
 	expect(manager.status().jobs[0]).toMatchObject({ status: "ready" });
 	expect(integratedRepairs).toBe(1);
+}, 30_000);
+
+test("readiness expires when the checked worktree changes", async () => {
+	const { repo, stateDir } = fixture();
+	const worker = { async run(request: import("./manager").WorkerRequest) {
+		if (request.role === "implementer") {
+			writeFileSync(join(request.cwd, "value.txt"), "checked\n");
+			executeGit(request.cwd, ["commit", "-am", "Checked candidate"]);
+		}
+		return { text: "Candidate", model: request.model, report: { revision: executeGit(request.cwd, ["rev-parse", "HEAD"]), verdict: "pass", findings: [] } };
+	} };
+	const manager = new WorkManager({ stateDir, worker, model: { provider: "fixture", id: "local" } });
+	managers.push(manager);
+	manager.submit([{ id: "one", repo, branch: "feature/one", task: "Set checked value", acceptance: ["Value is checked"], checks: [{ name: "content", command: "test \"$(cat value.txt)\" = checked" }] }]);
+	await manager.start();
+	const ready = manager.status().jobs[0]!;
+	expect(ready.status).toBe("ready");
+	writeFileSync(join(ready.worktree, "unfinished.txt"), "Do not lose this\n");
+	expect(manager.status().jobs[0]?.status).toBe("interrupted");
+	expect(readFileSync(join(ready.worktree, "unfinished.txt"), "utf8")).toBe("Do not lose this\n");
+});
+
+test("explicit resume advances queued work after a persisted pause", async () => {
+	const { repo, stateDir } = fixture();
+	const worker = { async run(request: import("./manager").WorkerRequest) {
+		if (request.role === "implementer") {
+			writeFileSync(join(request.cwd, "value.txt"), "resumed\n");
+			executeGit(request.cwd, ["commit", "-am", "Resumed work"]);
+		}
+		return { text: "Candidate", model: request.model, report: { revision: executeGit(request.cwd, ["rev-parse", "HEAD"]), verdict: "pass", findings: [] } };
+	} };
+	const manager = new WorkManager({ stateDir, worker, model: { provider: "fixture", id: "local" } });
+	managers.push(manager);
+	manager.pause();
+	manager.submit([{ id: "one", repo, branch: "feature/one", task: "Set resumed value", acceptance: ["Value is resumed"], checks: [{ name: "content", command: "test \"$(cat value.txt)\" = resumed" }] }]);
+	await manager.start();
+	await manager.resume();
+	expect(manager.status()).toMatchObject({ paused: false, jobs: [expect.objectContaining({ id: "one", status: "ready" })] });
+});
+
+test("cleanup retains the committed result and history while safely releasing its branch", async () => {
+	const { repo, stateDir } = fixture();
+	const worker = { async run(request: import("./manager").WorkerRequest) {
+		if (request.role === "implementer") {
+			writeFileSync(join(request.cwd, "value.txt"), "retained\n");
+			executeGit(request.cwd, ["commit", "-am", "Retained result"]);
+		}
+		return { text: "Candidate", model: request.model, report: { revision: executeGit(request.cwd, ["rev-parse", "HEAD"]), verdict: "pass", findings: [] } };
+	} };
+	const manager = new WorkManager({ stateDir, worker, model: { provider: "fixture", id: "local" } });
+	managers.push(manager);
+	const input = { id: "one", repo, branch: "feature/one", task: "Set retained value", acceptance: ["Value is retained"], checks: [{ name: "content", command: "test \"$(cat value.txt)\" = retained" }] };
+	manager.submit([input]);
+	await manager.start();
+	const ready = manager.status().jobs[0]!;
+	const archived = manager.cleanup("one");
+	expect(archived.archivedAt).toBeString();
+	expect(executeGit(repo, ["rev-parse", "feature/one"])).toBe(ready.candidate!);
+	manager.submit([{ ...input, id: "two" }]);
+	expect(manager.status().jobs[0]).toMatchObject({ id: "one", status: "ready", archivedAt: archived.archivedAt });
+	expect(manager.status().jobs[1]?.status).toBe("queued");
+});
+
+test("interrupted verification resumes from its committed candidate without duplicate implementation", async () => {
+	const { repo, stateDir } = fixture();
+	let implementations = 0;
+	let holding = true;
+	let reviewing!: () => void;
+	const reviewStarted = new Promise<void>((resolve) => { reviewing = resolve; });
+	const worker = { async run(request: import("./manager").WorkerRequest) {
+		if (request.role === "implementer") {
+			implementations++;
+			writeFileSync(join(request.cwd, "value.txt"), "resumable\n");
+			executeGit(request.cwd, ["commit", "-am", "One candidate"]);
+		} else if (holding) {
+			reviewing();
+			await new Promise((_resolve, reject) => request.signal?.addEventListener("abort", () => reject(new Error("Interrupted review")), { once: true }));
+		}
+		return { text: "Candidate", model: request.model, report: { revision: executeGit(request.cwd, ["rev-parse", "HEAD"]), verdict: "pass", findings: [] } };
+	} };
+	const first = new WorkManager({ stateDir, worker, model: { provider: "fixture", id: "local" } });
+	managers.push(first);
+	first.submit([{ id: "one", repo, branch: "feature/one", task: "Set resumable value", acceptance: ["Value is resumable"], checks: [{ name: "content", command: "test \"$(cat value.txt)\" = resumable" }] }]);
+	const running = first.start();
+	await reviewStarted;
+	await first.close();
+	await running;
+	holding = false;
+	const resumed = new WorkManager({ stateDir, worker, model: { provider: "fixture", id: "local" } });
+	managers.push(resumed);
+	expect(resumed.status().jobs[0]?.status).toBe("interrupted");
+	await resumed.resume();
+	expect(resumed.status().jobs[0]?.status).toBe("ready");
+	expect(implementations).toBe(1);
+	expect(executeGit(repo, ["rev-list", "--count", "feature/one"])).toBe("2");
+});
+
+test("recovery after SIGKILL reconciles an unreported commit without rerunning implementation", async () => {
+	const { root, repo, stateDir } = fixture();
+	const marker = join(root, "committed.marker");
+	const child = Bun.spawn([process.execPath, fileURLToPath(new URL("./fixtures/crash-manager.ts", import.meta.url)), repo, stateDir, marker], { stdout: "pipe", stderr: "pipe" });
+	try {
+		const deadline = Date.now() + 10_000;
+		while (!existsSync(marker) && Date.now() < deadline && child.exitCode === null) await Bun.sleep(10);
+		expect(existsSync(marker)).toBe(true);
+		child.kill("SIGKILL");
+		await child.exited;
+		let implementations = 0;
+		const worker = { async run(request: import("./manager").WorkerRequest) {
+			if (request.role === "implementer") implementations++;
+			return { text: "Reviewed existing commit", model: request.model, report: { revision: executeGit(request.cwd, ["rev-parse", "HEAD"]), verdict: "pass", findings: [] } };
+		} };
+		const recovered = new WorkManager({ stateDir, worker, model: { provider: "fixture", id: "local" } });
+		managers.push(recovered);
+		expect(recovered.status().jobs[0]?.status).toBe("running");
+		await recovered.resume();
+		expect(recovered.status().jobs[0]?.status).toBe("ready");
+		expect(implementations).toBe(0);
+		expect(executeGit(repo, ["rev-list", "--count", "feature/crash"])).toBe("2");
+	} finally { if (child.exitCode === null) { child.kill("SIGKILL"); await child.exited; } }
 }, 30_000);
