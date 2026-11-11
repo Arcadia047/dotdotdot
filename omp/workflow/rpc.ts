@@ -7,6 +7,8 @@ export interface WorkerModel { provider: string; id: string; thinking?: string }
 export interface WorkerRequest {
   cwd: string;
   model: WorkerModel;
+  /** Trusted host callback, resolved at the spawn boundary after queueing. */
+  selectModel?: () => WorkerModel | Promise<WorkerModel>;
   prompt: string;
   sessionDir: string;
   role?: string;
@@ -50,7 +52,6 @@ export class OmpWorker {
   constructor(private readonly options: OmpWorkerOptions = {}) {}
 
   async run(request: WorkerRequest): Promise<WorkerResult> {
-    if (!request.model?.provider?.trim() || !request.model?.id?.trim()) throw new WorkerError("model", "A host-selected provider and model ID are required");
     if (!request.prompt?.trim()) throw new WorkerError("prompt", "A worker prompt is required");
     const timeoutMs = request.timeoutMs ?? this.options.defaultTimeoutMs ?? 30 * 60 * 1000;
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new WorkerError("timeout", "Worker timeout must be a positive finite duration");
@@ -65,9 +66,12 @@ export class OmpWorker {
     const command = this.options.command ?? ["omp"];
     if (!command.length) throw new WorkerError("process", "OMP executable is required", stderrFile);
     const tools = /review|research|analyst|planner/i.test(request.role ?? "") ? "read,grep,glob" : "read,grep,glob,edit,write,bash";
+    const model = { ...await (request.selectModel?.() ?? request.model) };
+    if (!model.provider?.trim() || !model.id?.trim()) throw new WorkerError("model", "A host-selected provider and model ID are required", stderrFile);
+    if (request.signal?.aborted) throw new WorkerError("cancelled", "Worker cancelled before spawn", stderrFile);
     const args = [...command.slice(1), ...(this.options.extraArgs ?? []), "--mode", "rpc", "--no-ui", "--cwd", resolve(request.cwd),
-      "--model", `${request.model.provider}/${request.model.id}`, "--session-dir", sessionDir, "--tools", tools];
-    if (request.model.thinking !== undefined) args.push("--thinking", request.model.thinking);
+      "--model", `${model.provider}/${model.id}`, "--session-dir", sessionDir, "--tools", tools];
+    if (model.thinking !== undefined) args.push("--thinking", model.thinking);
     const child = spawn(command[0], args, { cwd: resolve(request.cwd), detached: true,
       env: { ...(this.options.inheritEnv === false ? {} : process.env), ...this.options.env, DOTDOTDOT_WORK_CHILD: "1" }, stdio: "pipe" });
     const fatal = deferred<never>();
@@ -178,7 +182,7 @@ export class OmpWorker {
       if (child.pid) request.onSpawn?.({ pid: child.pid, sessionDir });
       await step(ready.promise);
       const verifyModel = (state: Frame) => {
-        if (state?.model?.provider !== request.model.provider || state?.model?.id !== request.model.id) throw new WorkerError("model", "OMP did not select the exact requested provider/model", stderrFile);
+        if (state?.model?.provider !== model.provider || state?.model?.id !== model.id) throw new WorkerError("model", "OMP did not select the exact requested provider/model", stderrFile);
       };
       verifyModel((await rpc("get_state")).data);
       // Avoid large redundant streamed snapshots; completion side channels are unaffected.
@@ -199,7 +203,7 @@ export class OmpWorker {
       if (buffer.length) throw new WorkerError("protocol", "OMP stdout ended with an incomplete RPC frame", stderrFile);
       if (exit.code !== 0) throw new WorkerError("process", `OMP exited unsuccessfully (${exit.signal ?? exit.code})`, stderrFile);
       return { text: last.text, ...(report === undefined ? {} : { report }), sessionFile: state.sessionFile,
-        model: { provider: request.model.provider, id: request.model.id }, pid: child.pid!, promptId: promptId!, stderrFile, transcriptFile };
+        model: { provider: model.provider, id: model.id }, pid: child.pid!, promptId: promptId!, stderrFile, transcriptFile };
     } finally {
       clearTimeout(timer);
       request.signal?.removeEventListener("abort", cancel);

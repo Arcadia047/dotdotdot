@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative } from "node:path";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { executeGit } from "./jobs";
 import type { Job } from "./types";
 
@@ -19,6 +19,7 @@ export interface QualityWorker {
   run(request: {
     cwd: string;
     model: ModelSelection;
+    selectModel?: () => ModelSelection | Promise<ModelSelection>;
     prompt: string;
     sessionDir: string;
     role?: ReviewRole;
@@ -60,6 +61,7 @@ export interface CheckResult {
   stdoutFile: string;
   stderrFile: string;
   receiptFile: string;
+  processFile?: string;
   failures: string[];
 }
 
@@ -72,6 +74,7 @@ export interface ReviewResult {
   failures: string[];
   evidenceFile: string;
   sessionFile?: string;
+  model?: ModelSelection;
 }
 
 export interface GateResult {
@@ -95,7 +98,7 @@ export interface GateResult {
 export interface QualityGateOptions {
   stateDir: string;
   worker: QualityWorker;
-  modelFor: (role: ReviewRole) => ModelSelection;
+  modelFor: (role: ReviewRole) => ModelSelection | Promise<ModelSelection>;
   timeoutMs?: number;
   signal?: AbortSignal;
   instructions?: string | ((role: string, job: Job) => string | Promise<string>);
@@ -105,6 +108,44 @@ interface Receipt {
   version: 1;
   result: GateResult;
   artifacts: { path: string; sha256: string }[];
+}
+
+/** Durable host-owned process identity; an unsettled record is never a pass. */
+export interface CheckProcessRecord {
+  version: 1;
+  kind: "check";
+  role: "check";
+  jobId: string;
+  cwd: string;
+  revision: string;
+  planHash: string;
+  name: string;
+  command: string;
+  status: "starting" | "running" | "ended";
+  ended: boolean;
+  startedAt: string;
+  pid?: number;
+  pgid?: number;
+  stamp?: string;
+  endedAt?: string;
+  exitCode?: number | null;
+  signal?: string | null;
+}
+
+function writeProcessRecord(path: string, record: CheckProcessRecord): void {
+  const pending = `${path}.${randomUUID()}.tmp`;
+  const file = openSync(pending, "wx", 0o600);
+  try { writeFileSync(file, JSON.stringify(record, null, 2)); fsyncSync(file); } finally { closeSync(file); }
+  renameSync(pending, path);
+  const directory = openSync(dirname(path), "r");
+  try { fsyncSync(directory); } finally { closeSync(directory); }
+}
+
+function groupAlive(pgid: number): boolean {
+  try { process.kill(-pgid, 0); return true; } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    return true; // Missing access or an unknown process state is not a drain.
+  }
 }
 
 const reportSchema: Record<string, unknown> = {
@@ -183,6 +224,20 @@ export class QualityGate {
       result.failures.push("Accepted task, acceptance criteria and at least one named nonempty check command are required.");
       blocked = true;
     }
+    const processes = join(this.stateDir, "processes", input.id);
+    if (existsSync(processes)) {
+      for (const file of readdirSync(processes)) {
+        // Atomic replacement temporaries are not accepted as completed records.
+        if (!file.endsWith(".json")) continue;
+        try {
+          const record = JSON.parse(readFileSync(join(processes, file), "utf8")) as CheckProcessRecord;
+          if (record.ended !== true || record.status !== "ended") throw new Error("unsettled process");
+        } catch {
+          result.failures.push(`Interrupted or unknown check process record ${join(processes, file)} must be reconciled before another verification.`);
+          blocked = true;
+        }
+      }
+    }
     try {
       result.revision = executeGit(input.worktree, ["rev-parse", "HEAD"]);
       this.assertGit(input, result.revision);
@@ -217,7 +272,7 @@ export class QualityGate {
     result.disposition = result.passed ? "passed" : blocked ? "blocked" : "repair";
     const paths = [
       result.diffFile,
-      ...result.checks.flatMap((check) => [check.stdoutFile, check.stderrFile, check.receiptFile]),
+      ...result.checks.flatMap((check) => [check.stdoutFile, check.stderrFile, check.receiptFile, ...(check.processFile ? [check.processFile] : [])]),
       ...result.reviews.map((review) => review.evidenceFile),
     ];
     result.evidence = [...paths, result.receiptFile];
@@ -256,7 +311,7 @@ export class QualityGate {
     }
     const required = [
       result.diffFile,
-      ...result.checks.flatMap((check) => [check.stdoutFile, check.stderrFile, check.receiptFile]),
+      ...result.checks.flatMap((check) => [check.stdoutFile, check.stderrFile, check.receiptFile, ...(check.processFile ? [check.processFile] : [])]),
       ...result.reviews.map((review) => review.evidenceFile),
     ];
     if (JSON.stringify(result.evidence) !== JSON.stringify([...required, result.receiptFile]) ||
@@ -303,13 +358,28 @@ export class QualityGate {
         result.status = "cancelled";
         result.failures.push(`Check ${check.name} cancelled before execution.`);
       } else {
+        const directory = join(this.stateDir, "processes", job.id);
+        mkdirSync(directory, { recursive: true, mode: 0o700 });
+        result.processFile = join(directory, `${randomUUID()}.json`);
+        let record: CheckProcessRecord = {
+          version: 1, kind: "check", role: "check", jobId: job.id, cwd: job.worktree,
+          revision: gate.revision, planHash: gate.planHash, name: check.name, command: check.command,
+          status: "starting", ended: false, startedAt: result.startedAt,
+        };
+        writeProcessRecord(result.processFile, record);
         await new Promise<void>((resolve) => {
           const stdout = openSync(result.stdoutFile, "a");
           const stderr = openSync(result.stderrFile, "a");
-          const child = spawn("/bin/sh", ["-c", check.command], { cwd: job.worktree, detached: true, stdio: ["ignore", stdout, stderr] });
+          // No command can run until its identity is durably recorded. EOF from
+          // a killed manager exits this wrapper without executing the command.
+          const child = spawn("/bin/sh", ["-c", 'IFS= read -r _omp_check_start && [ "$_omp_check_start" = run ] || exit 125\nexec /bin/sh -c "$1"', "omp-quality-check", check.command], {
+            cwd: job.worktree, detached: true, stdio: ["pipe", stdout, stderr],
+          });
           closeSync(stdout);
           closeSync(stderr);
           let stopReason: "timed_out" | "cancelled" | undefined;
+          let journalFailure = false;
+          let settled = false;
           const stop = (reason: typeof stopReason) => {
             stopReason = reason;
             if (child.pid) { try { process.kill(-child.pid, "SIGKILL"); } catch { /* Already settled. */ } }
@@ -318,16 +388,11 @@ export class QualityGate {
           const abort = () => stop("cancelled");
           this.options.signal?.addEventListener("abort", abort, { once: true });
           if (this.options.signal?.aborted) abort();
-          const finish = () => {
+          const finish = async (code: number | null, signal: string | null) => {
+            if (settled) return;
+            settled = true;
             clearTimeout(timer);
             this.options.signal?.removeEventListener("abort", abort);
-            resolve();
-          };
-          child.once("error", (error) => {
-            result.failures.push(`Check ${check.name} unavailable: ${message(error)}`);
-            finish();
-          });
-          child.once("exit", (code, signal) => {
             result.exitCode = code;
             result.signal = signal;
             // The shell's exit is not completion when its owned descendants can
@@ -342,10 +407,47 @@ export class QualityGate {
               }
             }
             if (descendants) result.failures.push(`Check ${check.name} left running descendants after the shell exited; the owned process group was stopped.`);
-            result.status = stopReason ?? (descendants || signal || code === null || code === 126 || code === 127 ? "unavailable" : code === 0 ? "passed" : "failed");
+            // Record completion only after the entire detached group drains.
+            for (let count = 0; child.pid && groupAlive(child.pid) && count < 100; count++) await Bun.sleep(10);
+            const drained = !child.pid || !groupAlive(child.pid);
+            if (!drained) result.failures.push(`Check ${check.name} process group has not drained; its interrupted journal was retained.`);
+            result.status = stopReason ?? (journalFailure || !drained || descendants || signal || code === null || code === 126 || code === 127 ? "unavailable" : code === 0 ? "passed" : "failed");
+            if (drained) {
+              record = { ...record, status: "ended", ended: true, endedAt: new Date().toISOString(), exitCode: code, signal };
+              try { writeProcessRecord(result.processFile!, record); } catch (error) {
+                result.status = "unavailable";
+                result.failures.push(`Check ${check.name} cannot persist its drained outcome: ${message(error)}`);
+              }
+            }
             if (result.status !== "passed") result.failures.push(`Check ${check.name} ${result.status} (exit ${code}, signal ${signal}); see ${result.stderrFile}.`);
-            finish();
+            resolve();
+          };
+          child.once("error", (error) => {
+            journalFailure = true;
+            result.failures.push(`Check ${check.name} unavailable: ${message(error)}`);
+            void finish(null, null);
           });
+          child.once("exit", (code, signal) => { void finish(code, signal); });
+          child.stdin?.on("error", (error) => {
+            journalFailure = true;
+            result.failures.push(`Check ${check.name} could not release its journaled command: ${message(error)}`);
+            stop(undefined);
+          });
+          if (child.pid) {
+            try {
+              const stamp = Bun.spawnSync(["ps", "-p", String(child.pid), "-o", "lstart="]);
+              record = { ...record, status: "running", pid: child.pid, pgid: child.pid, stamp: stamp.exitCode === 0 ? stamp.stdout.toString().trim() : "" };
+              writeProcessRecord(result.processFile!, record);
+              if (!record.stamp) throw new Error("The owned check process identity could not be observed.");
+              if (this.options.signal?.aborted) stop("cancelled");
+              else child.stdin?.end("run\n");
+            } catch (error) {
+              journalFailure = true;
+              result.failures.push(`Check ${check.name} cannot persist a usable running identity: ${message(error)}`);
+              stop(undefined);
+              child.stdin?.end();
+            }
+          }
         });
       }
       this.assertGit(job, gate.revision);
@@ -372,13 +474,18 @@ export class QualityGate {
     try {
       this.assertGit(job, gate.revision);
       if (this.options.signal?.aborted) throw new Error("Review cancelled before execution.");
-      const model = this.options.modelFor(role);
-      if (!model || !nonempty(model.provider) || !nonempty(model.id)) throw new Error(`No usable local model selection for ${role}.`);
+      const selectModel = async () => {
+        const selected = await this.options.modelFor(role);
+        if (!selected || !nonempty(selected.provider) || !nonempty(selected.id)) throw new Error(`No usable local model selection for ${role}.`);
+        result.model = { ...selected };
+        return { ...selected };
+      };
+      const model = await selectModel();
       const sessionDir = join(runDir, `${axis}-session`);
       mkdirSync(sessionDir, { mode: 0o700 });
       const guidance = typeof this.options.instructions === "function" ? await this.options.instructions(role, structuredClone(job)) : this.options.instructions;
       const request = this.options.worker.run({
-        cwd: job.worktree, model, role, sessionDir, reportSchema,
+        cwd: job.worktree, model, selectModel, role, sessionDir, reportSchema,
         signal: controller.signal, timeoutMs: this.timeoutMs,
         prompt: [
           `Perform an independent ${axis === "spec" ? "Spec" : "Standards and technical correctness"} review; do not edit files or change Git state.`,
@@ -400,6 +507,7 @@ export class QualityGate {
       });
       const output = await Promise.race([request, timeout, cancelled]);
       response = output;
+      if (output.model?.provider !== result.model?.provider || output.model?.id !== result.model?.id) throw new Error("Reviewer actual model differs from its host-selected dispatch model.");
       const report = parseReport(output.report, gate.revision);
       result.report = report;
       if (output.sessionFile !== undefined) result.sessionFile = output.sessionFile;

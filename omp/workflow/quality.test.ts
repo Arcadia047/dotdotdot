@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkRepository } from "./jobs";
@@ -43,9 +43,9 @@ function fixture(command = "test \"$(cat shared.txt)\" = candidate", change = tr
 
 const model = { provider: "fixture-provider", id: "local-choice" };
 const passingWorker = {
-  async run(request: { cwd: string }) {
+  async run(request: { cwd: string; model?: typeof model }) {
     return {
-      text: "Reviewed the actual candidate", model, pid: 123, promptId: "fixture", stderrFile: "/unused-fixture-stderr",
+      text: "Reviewed the actual candidate", model: request.model ?? model, pid: 123, promptId: "fixture", stderrFile: "/unused-fixture-stderr",
       report: { revision: git(request.cwd, "rev-parse", "HEAD"), verdict: "pass", findings: [] },
     };
   },
@@ -330,5 +330,98 @@ test("checks cannot report completion while leaving background descendants runni
     expect(result.failures.join("\n")).toMatch(/running|descendant/);
   } finally {
     try { process.kill(pid, "SIGKILL"); } catch { /* Gate cleanup should already have stopped it. */ }
+  }
+});
+
+test("check journals identify the actual owned running group and end only after it drains", async () => {
+  const { job, stateDir } = fixture("printf '%s' \"$$\"; sleep 0.2");
+  const gate = new QualityGate({ stateDir, worker: passingWorker, modelFor: () => model });
+  const verifying = gate.verify(job);
+  const directory = join(stateDir, "processes", job.id);
+  let file = "";
+  for (let count = 0; count < 100; count++) {
+    if (existsSync(directory)) file = readdirSync(directory).find((entry) => entry.endsWith(".json")) ?? "";
+    if (file && JSON.parse(readFileSync(join(directory, file), "utf8")).status === "running") break;
+    await Bun.sleep(10);
+  }
+  expect(file).not.toBe("");
+  const path = join(directory, file);
+  const running = JSON.parse(readFileSync(path, "utf8"));
+  expect(running).toMatchObject({ version: 1, kind: "check", role: "check", jobId: job.id, cwd: job.worktree, revision: job.candidate, status: "running", ended: false });
+  expect(running.pid).toBeGreaterThan(0);
+  expect(running.pgid).toBe(running.pid);
+  expect(running.stamp.length).toBeGreaterThan(0);
+  expect(() => process.kill(-running.pgid, 0)).not.toThrow();
+  const result = await verifying;
+  expect(result.passed).toBe(true);
+  expect(readFileSync(result.checks[0]!.stdoutFile, "utf8")).toBe(String(running.pid));
+  expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ pid: running.pid, status: "ended", ended: true, exitCode: 0, signal: null });
+  expect(() => process.kill(-running.pgid, 0)).toThrow();
+});
+
+test("late trusted model selection is captured and actual wrong-model reviews remain blocked", async () => {
+  const { job, stateDir } = fixture();
+  let current = model;
+  const late = { provider: "updated-provider", id: "updated-choice" };
+  const gate = new QualityGate({ stateDir, modelFor: async () => current, worker: {
+    async run(request) {
+      current = late;
+      const selected = await request.selectModel!();
+      return { ...await passingWorker.run(request), model: selected };
+    },
+  } });
+  const result = await gate.verify(job);
+  expect(result.failures).toEqual([]);
+  expect(result.passed).toBe(true);
+  for (const review of result.reviews) expect(review.model).toEqual(late);
+  expect(() => gate.assertCurrent(job, result)).not.toThrow();
+  const wrong = new QualityGate({ stateDir, modelFor: async () => model, worker: {
+    async run(request) { return { ...await passingWorker.run(request), model: late }; },
+  } });
+  const rejected = await wrong.verify(job);
+  expect(rejected.disposition).toBe("blocked");
+  expect(rejected.failures.join("\n")).toMatch(/model/);
+});
+
+test("an interrupted check retains its owned identity and cannot be duplicated or treated as a pass", async () => {
+  const { root, job, stateDir } = fixture();
+  const starts = join(root, "starts");
+  job.checks[0]!.command = `echo "$$" >> '${starts.replaceAll("'", "'\\''")}' ; sleep 10`;
+  const jobFile = join(root, "job.json");
+  const resultFile = join(root, "result.json");
+  writeFileSync(jobFile, JSON.stringify(job));
+  const script = join(root, "interrupted.ts");
+  writeFileSync(script, `
+    import {readFileSync, writeFileSync} from 'node:fs';
+    import {QualityGate} from ${JSON.stringify(join(import.meta.dir, "quality.ts"))};
+    const job = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+    const model = {provider:'fixture',id:'fixture'};
+    const worker = {async run(request) {return {text:'review',model:request.model,report:{revision:job.candidate,verdict:'pass',findings:[]}}}};
+    const result = await new QualityGate({stateDir:process.argv[3],worker,modelFor:()=>model}).verify(job);
+    writeFileSync(process.argv[4],JSON.stringify(result));
+  `);
+  const host = Bun.spawn([process.execPath, script, jobFile, stateDir, resultFile], { stdout: "ignore", stderr: "inherit" });
+  let pgid: number | undefined;
+  try {
+    for (let count = 0; count < 200 && !existsSync(starts); count++) await Bun.sleep(10);
+    expect(existsSync(starts)).toBe(true);
+    const directory = join(stateDir, "processes", job.id);
+    const record = JSON.parse(readFileSync(join(directory, readdirSync(directory).find((name) => name.endsWith(".json"))!), "utf8"));
+    pgid = record.pgid;
+    expect(record).toMatchObject({ jobId: job.id, status: "running", ended: false });
+    host.kill("SIGKILL");
+    await host.exited;
+    expect(() => process.kill(-pgid!, 0)).not.toThrow();
+    const gate = new QualityGate({ stateDir, worker: passingWorker, modelFor: () => model });
+    const result = await gate.verify(job);
+    expect(result.passed).toBe(false);
+    expect(result.disposition).toBe("blocked");
+    expect(result.failures.join("\n")).toMatch(/Interrupted|unknown.*process/);
+    expect(readFileSync(starts, "utf8").trim().split("\n")).toHaveLength(1);
+    expect(existsSync(resultFile)).toBe(false);
+  } finally {
+    host.kill("SIGKILL");
+    await host.exited;
+    if (pgid) { try { process.kill(-pgid, "SIGKILL"); } catch {} }
   }
 });

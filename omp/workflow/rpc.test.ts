@@ -116,3 +116,14 @@ test("pre-cancelled work never spawns or creates session artifacts", async () =>
   expect(spawned).toBe(false);
   expect(existsSync(request.sessionDir)).toBe(false);
 });
+
+test("a trusted late model selector supplies the actual spawn arguments and verification identity", async () => {
+  const { worker, request } = fixture();
+  const selected = { provider: "updated-route", id: "updated/model", thinking: "low" };
+  const result = await worker.run({ ...request, selectModel: async () => selected });
+  const observed = JSON.parse(result.text);
+  expect(observed.args).toContain("updated-route/updated/model");
+  expect(observed.args).toContain("low");
+  expect(observed.args).not.toContain("host-route/chosen/model");
+  expect(result.model).toEqual({ provider: selected.provider, id: selected.id });
+});
