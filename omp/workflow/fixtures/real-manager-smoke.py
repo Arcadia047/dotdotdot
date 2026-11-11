@@ -2,6 +2,7 @@
 """Real public WorkManager + OmpWorker + installed OMP acceptance fixture.
 
 Run: python3 omp/workflow/fixtures/real-manager-smoke.py
+     python3 omp/workflow/fixtures/real-manager-smoke.py --cancel-native
 
 A deterministic loopback-only provider drives native write/bash tools, then
 fresh read-only reviewer sessions and finish_report. Real Git worktrees, shell
@@ -88,6 +89,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--omp', default=shutil.which('omp'))
     parser.add_argument('--bun', default=shutil.which('bun'))
+    parser.add_argument('--cancel-native', action='store_true', help='Separately verify cancellation of a running native shell tool')
     args = parser.parse_args()
     if not args.omp or not args.bun:
         parser.error('Both omp and bun must be installed')
@@ -120,16 +122,20 @@ def main():
             req = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             messages = req.get('messages', [])
             prompt = '\n'.join(text_content(message.get('content')) for message in messages if message.get('role') == 'user')
-            job = re.search(r'Fixture job: (alpha|beta)\.', prompt)
-            assert job, 'Missing fixture job in real manager prompt'
-            job = job.group(1)
-            if 'Perform an independent Spec review;' in prompt:
-                role = 'spec-reviewer'
-            elif 'Perform an independent Standards and technical correctness review;' in prompt:
-                role = 'technical-reviewer'
+            if args.cancel_native:
+                assert 'Fixture cancellation: native-bash.' in prompt
+                job, role = 'cancel-native', 'implementer'
             else:
-                role = 'implementer'
-                assert f'You are the implementer for job {job}.' in prompt
+                job = re.search(r'Fixture job: (alpha|beta)\.', prompt)
+                assert job, 'Missing fixture job in real manager prompt'
+                job = job.group(1)
+                if 'Perform an independent Spec review;' in prompt:
+                    role = 'spec-reviewer'
+                elif 'Perform an independent Standards and technical correctness review;' in prompt:
+                    role = 'technical-reviewer'
+                else:
+                    role = 'implementer'
+                    assert f'You are the implementer for job {job}.' in prompt
             tools = {tool['function']['name']: tool['function'] for tool in req.get('tools', [])}
             assert self.path == '/v1/chat/completions' and req.get('model') == 'fixture'
             assert not ({'task', 'eval'} & set(tools)), 'Delegation tools must be unavailable'
@@ -153,7 +159,10 @@ def main():
 
             name = None
             report = None
-            if role == 'implementer':
+            if args.cancel_native:
+                assert calls == [], 'Cancellation must occur during the first native shell tool'
+                name, arguments = 'bash', dict(command='printf started > started.txt && sleep 3 && printf late > late.txt')
+            elif role == 'implementer':
                 expected = ['write', 'bash']
                 assert calls == expected[:len(calls)] and len(calls) <= len(expected), calls
                 if not calls:
@@ -238,7 +247,8 @@ def main():
 ''')
         warm_agent(root, args.omp, env)
         assert not requests, 'Profile initialization must not invoke any model'
-        command = [args.bun, str(Path(__file__).with_suffix('.ts')), str(root), args.omp]
+        driver = Path(__file__).with_name('real-manager-smoke-cancel.ts') if args.cancel_native else Path(__file__).with_suffix('.ts')
+        command = [args.bun, str(driver), str(root), args.omp]
         (root / 'launch.json').write_text(json.dumps(dict(command=command, env=env, ompVersion=version), indent=2))
         with (root / 'driver.stdout').open('w') as stdout, (root / 'driver.stderr').open('w') as stderr:
             process = subprocess.Popen(command, env=env, stdout=stdout, stderr=stderr, start_new_session=True)
@@ -248,14 +258,19 @@ def main():
         groups = {}
         for request in requests:
             groups.setdefault((request['job'], request['role']), []).append(request['priorTools'])
-        expected = {(job, role): [[], ['write'], ['write', 'bash']] if role == 'implementer'
+        expected = {('cancel-native', 'implementer'): [[]]} if args.cancel_native else {(job, role): [[], ['write'], ['write', 'bash']] if role == 'implementer'
                     else [[], ['read'], ['read', 'read'], ['read', 'read', 'finish_report']]
                     for job in ('alpha', 'beta') for role in ('implementer', 'spec-reviewer', 'technical-reviewer')}
         assert groups == expected, groups
         result = json.loads((root / 'result.json').read_text())
-        result.update(ompVersion=version, providerRequests=len(requests), parallelImplementerRequests=True)
+        result.update(ompVersion=version, providerRequests=len(requests))
+        if not args.cancel_native:
+            result['parallelImplementerRequests'] = True
         (root / 'result.json').write_text(json.dumps(result, indent=2))
-        print(f'PASS {version}: 2 ready branches; native writes/commits; 2 runtime checks; 4 fresh reviews; original dirty checkout preserved.')
+        if args.cancel_native:
+            print(f'PASS {version}: running native shell cancelled; late mutation prevented; OMP/RPC/stderr evidence retained.')
+        else:
+            print(f'PASS {version}: 2 ready branches; native writes/commits; 2 runtime checks; 4 fresh reviews; original dirty checkout preserved.')
         print('Scope: controlled provider behavior verifies pipeline mechanics, not model judgment or skill adoption.')
     finally:
         if process and process.poll() is None:
