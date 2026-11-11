@@ -49,6 +49,49 @@ test("registration is lazy and leaves the host and profile untouched until work 
   expect(existsSync(h.agentDir)).toBe(false);
 });
 
+test("the dashboard command reuses one server and the managing queue until stop or session shutdown", async () => {
+  const h = fixture();
+  registerWorkExtension(h.pi, { agentDir: h.agentDir, worker: { async run(): Promise<never> { throw new Error("Dashboard must not dispatch work"); } } });
+  shutdowns.push(() => h.events.get("session_shutdown")({}, h.ctx));
+  await h.call("work_control", { action: "pause" });
+  await h.call("work_submit", { jobs: [{ id: "held", repo: h.repo, branch: "feature/held", task: "Accepted pending work", acceptance: ["Retain work"], checks: [{ name: "value", command: "test -f value" }] }] });
+  const command = h.commands.get("work");
+  const address = () => h.messages.at(-1).message.content.match(/http:\/\/127\.0\.0\.1:\d+\/#token=[a-f0-9]+/)?.[0];
+  await command.handler("dashboard", h.ctx);
+  const first = address();
+  expect(first).toBeDefined();
+  const url = new URL(first);
+  const headers = { Authorization: `Bearer ${new URLSearchParams(url.hash.slice(1)).get("token")}` };
+  expect(await (await fetch(new URL("/api/status", url), { headers })).json()).toMatchObject({ paused: true, counts: { total: 1, waiting: 1 }, jobs: [{ id: "held", task: "Accepted pending work" }] });
+  await command.handler("dashboard", h.ctx);
+  expect(address()).toBe(first);
+  await command.handler("dashboard stop", h.ctx);
+  expect(h.messages.at(-1).message.content).toContain("stopped");
+  await expect(fetch(new URL("/api/status", url), { headers })).rejects.toThrow();
+  expect((await h.call("work_status")).details.jobs[0].status).toBe("queued");
+  await command.handler("dashboard", h.ctx);
+  const restarted = new URL(address());
+  expect(restarted.hash).not.toBe(url.hash);
+  await h.events.get("session_shutdown")({}, h.ctx);
+  await expect(fetch(new URL("/api/status", restarted))).rejects.toThrow();
+});
+
+test("terminal status summarizes large accepted tasks and points to dashboard details", async () => {
+  const h = fixture();
+  registerWorkExtension(h.pi, { agentDir: h.agentDir });
+  shutdowns.push(() => h.events.get("session_shutdown")({}, h.ctx));
+  await h.call("work_control", { action: "pause" });
+  await h.call("work_submit", { jobs: Array.from({ length: 12 }, (_, i) => ({ id: `held-${i}`, repo: h.repo, branch: `feature/held-${i}`, task: "Long accepted task detail ".repeat(500), acceptance: ["Retain scope"], checks: [{ name: "value", command: "test -f value" }] })) });
+  await h.commands.get("work").handler("status", h.ctx);
+  const message = h.messages.at(-1).message.content;
+  expect(message.includes("12 waiting")).toBe(true);
+  expect(message).toContain("paused");
+  expect(message).toContain("/work dashboard");
+  expect(message.length).toBeLessThan(300);
+  expect(message).not.toContain("Long accepted task detail");
+  expect((await h.call("work_status")).content[0].text.includes("Long accepted task detail")).toBe(true);
+});
+
 test("submitting an accepted job starts the pipeline and wakes the parent only with its checked result", async () => {
   const h = fixture();
   const skillsDir = join(h.root, "skills");
@@ -74,7 +117,9 @@ test("submitting an accepted job starts the pipeline and wakes the parent only w
   expect(requests.every((request) => request.prompt.includes("source revision") && request.model.provider === "fixture" && request.model.thinking === "off")).toBe(true);
   expect(h.messages).toHaveLength(1);
   expect(h.messages[0].options).toEqual({ deliverAs: "followUp", triggerTurn: true });
-  expect(h.messages[0].message.content).toContain('"status":"ready"');
+  expect(h.messages[0].message.content).toContain("one: ready");
+  expect(h.messages[0].message.content).toContain("/work dashboard");
+  expect(h.messages[0].message.content.length).toBeLessThan(500);
   expect(readFileSync(join(h.repo, "value"), "utf8")).toBe("original\n");
 });
 

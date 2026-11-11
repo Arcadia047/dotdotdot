@@ -95,6 +95,8 @@ Useful user commands:
 
 ```text
 /work status
+/work dashboard
+/work dashboard stop
 /work pause
 /work resume
 /work resume <job-id>
@@ -105,6 +107,30 @@ Useful user commands:
 /work role set implementer <available-model-selector>
 /work role clear implementer
 ```
+
+### Local browser dashboard
+
+Use `/work dashboard` in the managing OMP session and open the returned local
+URL. Repeating the command returns the same dashboard for that session. It shows
+jobs needing attention first, short reasons and next actions, then active,
+waiting, ready and archived work. Prerequisite failures stay in Waiting rather
+than creating duplicate attention items. Select a job to inspect its accepted
+task, branch, candidate, dependencies, workspace and validation evidence. Retained
+validation from an earlier attempt or an archived workspace is labeled historical;
+only current ready evidence is presented as current.
+
+The browser can pause dispatch, resume dispatch, or explicitly resume a blocked
+or interrupted job through the same manager's reconciliation rules. Acceptance of
+a resume request does not establish readiness. Errors remain visible, and a lost
+connection marks the view stale and disables its controls. Terminal status and
+completion notices remain short and point to the dashboard for details.
+
+The dashboard is opt-in, uses bundled local assets, binds only to `127.0.0.1` on
+an available port, and requests no model. Its per-start URL fragment supplies the
+browser's private access key; keep the full URL local. There are no arbitrary file
+routes, publishing controls, external uploads, or new settings. `/work dashboard
+stop` closes browser access while leaving the manager available. OMP session
+shutdown closes it as well; opening it again creates a new access key.
 
 Roles inherit the live parent model and thinking setting. Only explicit user
 commands save local identity selectors, resolved against the live OMP model

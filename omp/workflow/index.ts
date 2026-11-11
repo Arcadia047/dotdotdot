@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
+import { dashboardBucket, startDashboard, type DashboardServer } from "./dashboard";
 import { WorkManager, type WorkerClient, type ModelSelection } from "./manager";
 import { OmpWorker } from "./rpc";
 import { RoleChoices, SkillsSource } from "./skills";
@@ -20,7 +21,7 @@ export interface WorkHost {
   getThinkingLevel(): string;
 }
 interface Options { agentDir: string; worker?: WorkerClient; skillsDir?: string; upstream?: string }
-const help = "/work status | pause | resume [job-id] | cleanup <job-id> | skills status|sync | roles | role set <role> <model-selector> | role clear <role>\nSubmit an accepted plan through work_submit with self-contained tasks, acceptance criteria, checks, and explicit dependencies. Work continues while this OMP session is alive. Settings: <agent-dir>/work/config.json; skills require explicit /work skills sync.";
+const help = "/work dashboard [stop] | status | pause | resume [job-id] | cleanup <job-id> | skills status|sync | roles | role set <role> <model-selector> | role clear <role>\nSubmit an accepted plan through work_submit with self-contained tasks, acceptance criteria, checks, and explicit dependencies. Work continues while this OMP session is alive. Settings: <agent-dir>/work/config.json; skills require explicit /work skills sync.";
 
 function config(stateDir: string): { maxWorkers?: number; repairLimit?: number; validationTimeoutMs?: number; workerTimeoutMs?: number; skillsDir?: string } {
   const path = join(stateDir, "config.json");
@@ -38,6 +39,11 @@ function config(stateDir: string): { maxWorkers?: number; repairLimit?: number; 
 }
 function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function response(details: unknown) { return { content: [{ type: "text", text: JSON.stringify(details, null, 2) }], details }; }
+function statusSummary(status: ReturnType<WorkManager["status"]>): string {
+  const counts = { attention: 0, active: 0, waiting: 0, ready: 0, archived: 0 };
+  for (const job of status.jobs) counts[dashboardBucket(job)]++;
+  return `Work ${status.paused ? "paused" : "dispatch enabled"}: ${counts.attention} need attention, ${counts.active} active, ${counts.waiting} waiting, ${counts.ready} ready, ${counts.archived} archived. Details: /work dashboard.`;
+}
 
 /** Called by the host factory, also the public external-host verification seam. */
 export function registerWorkExtension(pi: WorkHost, options: Options): void {
@@ -45,6 +51,7 @@ export function registerWorkExtension(pi: WorkHost, options: Options): void {
   if (!isAbsolute(options.agentDir)) throw new Error("OMP must supply an absolute active agent directory.");
   const stateDir = join(options.agentDir, "work");
   let manager: WorkManager | undefined;
+  let dashboard: DashboardServer | undefined;
   let latest: WorkContext | undefined;
   let closing = false;
   const roles = new RoleChoices(stateDir);
@@ -99,8 +106,11 @@ export function registerWorkExtension(pi: WorkHost, options: Options): void {
           try { return source().snapshot(job.integrationTarget ?? job.id).instructions(role); }
           catch (error) { throw new Error(`${errorText(error)} Inspect /work skills status; use /work skills sync for explicit setup/update.`); }
         },
-        onEvent: ({ job, message }) => {
-          if (["ready", "blocked", "interrupted"].includes(job.status)) notify(`${message}\n${JSON.stringify({ id: job.id, status: job.status, branch: job.branch, revision: job.candidate, blocker: job.blocker, worktree: job.worktree, evidence: join(stateDir, "results", `${job.id}.json`) })}\nInspect the local evidence and follow through: report the result or precise blocker to the user; continue independent authorized work.`, true);
+        onEvent: ({ job }) => {
+          if (!["ready", "blocked", "interrupted"].includes(job.status)) return;
+          const outcome = job.status === "ready" ? `${job.branch.slice(0, 80)} @ ${job.candidate?.slice(0, 12) ?? "unrecorded revision"}` :
+            job.blocker?.startsWith("Blocked by dependency:") ? "Waiting for a prerequisite." : (job.blocker ?? "Reconciliation required.").split("\n")[0]!.replace(/\s+/g, " ").slice(0, 160);
+          notify(`${job.id}: ${job.status}. ${outcome}\nInspect /work dashboard for details and local evidence.`, true);
         },
       });
     }
@@ -140,8 +150,15 @@ export function registerWorkExtension(pi: WorkHost, options: Options): void {
     try {
       const parts = args.trim().split(/\s+/).filter(Boolean);
       const [action, sub, ...tail] = parts;
-      if (!action || action === "help") { notify(`${help}\n${JSON.stringify(getManager(ctx).status(), null, 2)}`); return; }
-      if (action === "status" && parts.length === 1) notify(JSON.stringify(getManager(ctx).status(), null, 2));
+      if (!action || action === "help") { notify(`${help}\n${statusSummary(getManager(ctx).status())}`); return; }
+      if (action === "dashboard" && (parts.length === 1 || (parts.length === 2 && sub === "stop"))) {
+        if (sub === "stop") { await dashboard?.close(); dashboard = undefined; notify("Work dashboard stopped. The work manager remains available."); }
+        else {
+          dashboard ??= startDashboard({ manager: getManager(ctx), stateDir, profile: basename(dirname(dirname(options.agentDir))) === "profiles" ? basename(dirname(options.agentDir)) : "default" });
+          notify(`Work dashboard: ${dashboard.url}`);
+        }
+      }
+      else if (action === "status" && parts.length === 1) notify(statusSummary(getManager(ctx).status()));
       else if (action === "pause" && parts.length === 1) { getManager(ctx).pause(); notify("Work dispatch paused. Active workers may finish; /work resume explicitly continues."); }
       else if (action === "resume" && parts.length <= 2) { background(getManager(ctx).resume(sub)); notify("Work reconciliation/resume requested; inspect /work status for progress."); }
       else if (action === "cleanup" && parts.length === 2) { getManager(ctx).cleanup(sub!); notify(`Retained local evidence; cleaned safe owned workspace for ${sub}.`); }
@@ -157,7 +174,7 @@ export function registerWorkExtension(pi: WorkHost, options: Options): void {
       else throw new Error(help);
     } catch (error) { notify(`Work command: ${errorText(error)}`); }
   } });
-  pi.on("session_shutdown", async () => { closing = true; await manager?.close(); });
+  pi.on("session_shutdown", async () => { closing = true; try { await dashboard?.close(); dashboard = undefined; } finally { await manager?.close(); } });
 }
 
 export default async function workExtension(pi: WorkHost): Promise<void> {
