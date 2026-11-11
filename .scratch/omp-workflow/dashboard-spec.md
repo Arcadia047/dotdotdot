@@ -12,6 +12,8 @@ Each job exposes its repository, branch, candidate, stage, attempts, dependencie
 
 For related tickets, show branch validation and integration validation as separate scopes with their own branch/revision. An earlier branch pass must not stand in for the failed integration outcome. Waiting labels distinguish unresolved prerequisites from paused dispatch or worker capacity. Delayed manager control failures remain visible inside an open job detail view.
 
+After the managing process dies, a fresh dashboard distinguishes retained recorded stages from an active controller. Interrupted running/checking/integrating records need attention and expose guarded recovery; they must not appear as live work merely because their persisted stage says running. Preserve raw runtime state and the existing explicit reconciliation rules.
+
 The browser can pause dispatch, resume dispatch, or explicitly resume one blocked/interrupted job through the existing manager guards. It cannot submit arbitrary code/commands, rewrite acceptance, mark work ready, delete worktrees, or publish. Controls have pending/error states and do not claim success before acceptance. Normal status updates and completion notices stay short and point to details.
 
 ## Runtime constraints

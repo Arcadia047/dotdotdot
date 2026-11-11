@@ -39,6 +39,7 @@ export interface DashboardSnapshot {
   generatedAt: string;
   profile: string;
   paused: boolean;
+  controllerActive: boolean;
   actionError?: string;
   counts: Record<DashboardBucket, number> & { total: number };
   jobs: DashboardJob[];
