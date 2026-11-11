@@ -11,12 +11,13 @@ brew_bin=""
 dry_run=0
 install_tools=0
 check_only=0
+omp_workflow=0
 check_failures=0
 check_warnings=0
 
 usage() {
   cat <<'EOF'
-Usage: ./bootstrap.sh [--dry-run] [--install] [--check]
+Usage: ./bootstrap.sh [--dry-run] [--install] [--check] [--omp-workflow]
 
 Links this repository into $HOME and backs up conflicting paths under:
   ~/.dotfiles-backups/<timestamp>/
@@ -25,6 +26,7 @@ Options:
   --dry-run   Show actions without changing the machine
   --install   Install Homebrew when needed, then all declared apps and tools
   --check     Read-only report for dependencies, links, Java, and submodules
+  --omp-workflow  Opt in to the local OMP work manager for the selected profile
   -h, --help  Show this help message
 
 Examples:
@@ -240,6 +242,61 @@ link_dotfiles() {
   link_item "$repo_root/.p10k.zsh" "$HOME/.p10k.zsh"
   initialize_theme
   configure_omp_themes
+  if ((omp_workflow)); then configure_omp_workflow; fi
+}
+
+# Manager adoption follows the explicitly selected OMP profile. Appearance setup
+# above deliberately retains its existing default-profile behavior.
+omp_workflow_agent_dir() {
+  local config_name="${PI_CONFIG_DIR:-.omp}"
+  local profile="${OMP_PROFILE-${PI_PROFILE-}}"
+  local agent="${PI_CODING_AGENT_DIR:-}"
+  local base
+  case "$config_name" in
+  /* | *$'\n'* | *$'\r'* | *\\*) die "PI_CONFIG_DIR must be a relative directory under HOME." ;;
+  esac
+  case "/$config_name/" in
+  */../* | */./* | *//*) die "PI_CONFIG_DIR must not contain empty, . or .. path components." ;;
+  esac
+  base="$HOME/$config_name"
+  # OMP trims profile names before applying its lowercase identifier rule.
+  profile="${profile#"${profile%%[![:space:]]*}"}"
+  profile="${profile%"${profile##*[![:space:]]}"}"
+  if [[ -n "$profile" && "$profile" != default ]]; then
+    [[ "$profile" =~ ^[a-z0-9][a-z0-9._-]{0,63}$ && "$profile" != *"." ]] || die "Invalid OMP profile: $profile"
+    case "${profile%%.*}" in
+    con | prn | aux | nul | com[0-9] | lpt[0-9]) die "Invalid reserved OMP profile: $profile" ;;
+    esac
+    printf '%s\n' "$base/profiles/$profile/agent"
+    return
+  fi
+  # A parent's named-profile directory is not a default-profile override.
+  if [[ -n "${PI_PROFILE:-}" && "$agent" == "$base/profiles/$PI_PROFILE/agent" ]]; then agent=""; fi
+  if [[ -n "$agent" ]]; then
+    [[ "$agent" == /* && "$agent" != *$'\n'* && "$agent" != *$'\r'* ]] || die "PI_CODING_AGENT_DIR must be an absolute local directory."
+    printf '%s\n' "$agent"
+  else
+    printf '%s\n' "$base/agent"
+  fi
+}
+
+configure_omp_workflow() {
+  local agent
+  agent="$(omp_workflow_agent_dir)" || return
+  link_item "$repo_root/omp/workflow/index.ts" "$agent/extensions/dotdotdot-work.ts"
+  log "OMP manager: reload OMP, then use /work and /work skills sync for explicit skill setup."
+}
+
+check_omp_workflow() {
+  local agent target
+  agent="$(omp_workflow_agent_dir)" || return
+  target="$agent/extensions/dotdotdot-work.ts"
+  if ((omp_workflow)) || [[ -e "$target" || -L "$target" ]]; then
+    check_command omp
+    check_link "$repo_root/omp/workflow/index.ts" "$target"
+  else
+    log "INFO: optional OMP work manager is not enabled (use --omp-workflow to opt in)"
+  fi
 }
 
 configure_omp_themes() {
@@ -481,6 +538,7 @@ check_installation() {
   check_link "$repo_root/.p10k.zsh" "$HOME/.p10k.zsh"
   check_theme
   check_omp_themes
+  check_omp_workflow
 
   check_submodules
   check_java
@@ -520,6 +578,9 @@ main() {
       ;;
     --install)
       install_tools=1
+      ;;
+    --omp-workflow)
+      omp_workflow=1
       ;;
     --check)
       check_only=1
