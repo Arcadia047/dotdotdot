@@ -7,4 +7,3 @@ Recorded before runtime implementation on 2026-11-11.
 Earlier synthetic Git checks confirmed parallel same-file edits on different branches, preservation of an original dirty checkout, refusal of duplicate active branch checkout, containment of an integration conflict, and refusal to remove unfinished work. Those checks exercised Git mechanics only.
 
 The proposed dispatcher, readiness enforcement, and OMP worker adapter have not been implemented or tested. Their required acceptance cases are recorded in the draft spec. This baseline is not evidence that the proposed workflow works.
-

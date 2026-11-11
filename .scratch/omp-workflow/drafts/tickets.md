@@ -19,4 +19,3 @@ Draft for confirmation; publish as separate local ticket files after approval. T
 - Do not modify unrelated existing work, require work-data uploads, or publish issues/PRs.
 - Each candidate includes the behavior it delivers, exact relevant revision, executed checks, and known limitations.
 - Final readiness is enforced by the manager's recorded evidence conditions, not by the worker reporting success.
-

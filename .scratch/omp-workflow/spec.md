@@ -95,4 +95,3 @@ Use independently known expected outcomes and planted defects. New tests should 
 ## Further Notes
 
 The role capability guide and research proposal remain design context, not proof of implementation. Readiness claims require the executable acceptance evidence above. All work-machine acceptance runs and evidence remain on that machine; manually reported permitted behavior can guide synthetic reproductions here.
-
