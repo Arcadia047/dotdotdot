@@ -78,6 +78,7 @@ export function registerWorkExtension(pi: WorkHost, options: Options): void {
         "Obtain user approval for actionable scope, acceptance criteria, validation commands, ticket dependencies and target/integration branches. Planning ready-for-agent is not runtime readiness.",
         "After approval, call work_submit with the accepted self-contained jobs array or accessible local spec/ticket pointers. The runtime owns worker scheduling, worktrees, checks, review, repair and integration; do not replace it with unmanaged workers or inject passing evidence.",
         "Status observes the installed local source without fetching. Use explicit work_skills sync or /work skills sync to update source; existing job/campaign snapshots stay unchanged.",
+        "Keep user-facing status replies to two short lines: outcome and the next action requiring the user, if any. Use /work dashboard for detail; do not paste full agent summaries or logs.",
         snapshot.instructions("work-manager"),
       ].join("\n"),
     } };
@@ -110,7 +111,7 @@ export function registerWorkExtension(pi: WorkHost, options: Options): void {
           if (!["ready", "blocked", "interrupted"].includes(job.status)) return;
           const outcome = job.status === "ready" ? `${job.branch.slice(0, 80)} @ ${job.candidate?.slice(0, 12) ?? "unrecorded revision"}` :
             job.blocker?.startsWith("Blocked by dependency:") ? "Waiting for a prerequisite." : (job.blocker ?? "Reconciliation required.").split("\n")[0]!.replace(/\s+/g, " ").slice(0, 160);
-          notify(`${job.id}: ${job.status}. ${outcome}\nInspect /work dashboard for details and local evidence.`, true);
+          notify(`${job.id}: ${job.status}. ${outcome}\nUse /work dashboard for details. Reply in at most two short lines: outcome and only the next action requiring the user.`, true);
         },
       });
     }

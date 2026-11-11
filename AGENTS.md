@@ -19,3 +19,5 @@ Single-context glossary and architectural decisions. See `docs/agents/domain.md`
 ## OMP workflow
 
 Use `omp/roles-and-capabilities.md` for role contracts and `docs/omp-agentic-workflow-research.md` for the accepted design context. Shared configuration must not contain a fixed model roster or freeze upstream skills to a release. Keep machine-specific model assignments and work artifacts local.
+
+Keep routine user-facing status to two short lines: the outcome and any action the user needs to take. Prefer the local dashboard and expandable evidence over pasted agent summaries or logs.
