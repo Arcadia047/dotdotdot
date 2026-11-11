@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,6 +50,43 @@ test("cleanup preserves ignored local data inside a ready worktree", async () =>
 	expect(() => manager.cleanup(job.id)).toThrow(/ignored|unaccounted/i);
 	expect(readFileSync(join(data, "local.db"), "utf8")).toBe("unaccounted local data");
 	expect(manager.status().jobs[0]!.archivedAt).toBeUndefined();
+});
+
+test("explicit resume retains ignored interrupted data without dispatching an editing worker", async () => {
+	const { repo, stateDir } = fixture();
+	writeFileSync(join(repo, ".gitignore"), "private-data/\n");
+	executeGit(repo, ["add", ".gitignore"]);
+	executeGit(repo, ["commit", "-m", "Ignore local data"]);
+	let editing!: () => void;
+	const started = new Promise<void>((resolve) => { editing = resolve; });
+	const first = new WorkManager({ stateDir, model: { provider: "fixture", id: "local" }, worker: { async run(request): Promise<never> {
+		mkdirSync(join(request.cwd, "private-data"));
+		writeFileSync(join(request.cwd, "private-data", "local.db"), "unaccounted interrupted data");
+		editing();
+		await new Promise<never>((_resolve, reject) => request.signal?.addEventListener("abort", () => reject(new Error("Interrupted implementation")), { once: true }));
+		throw new Error("Unreachable controlled worker");
+	} } });
+	managers.push(first);
+	const [job] = first.submit([{ id: "one", repo, branch: "feature/one", task: "Set the value", acceptance: ["Value changed"], checks: [{ name: "value", command: "test -f value.txt" }] }]);
+	const running = first.start();
+	await started;
+	await first.close();
+	await running;
+	let implementations = 0;
+	const recovered = new WorkManager({ stateDir, model: { provider: "fixture", id: "local" }, worker: { async run(request) {
+		if (request.role === "implementer") {
+			implementations++;
+			writeFileSync(join(request.cwd, "private-data", "local.db"), "overwritten by retry");
+			writeFileSync(join(request.cwd, "value.txt"), "changed\n");
+			executeGit(request.cwd, ["commit", "-am", "Retry candidate"]);
+		}
+		return { text: "Candidate", model: request.model, report: { revision: executeGit(request.cwd, ["rev-parse", "HEAD"]), verdict: "pass", findings: [] } };
+	} } });
+	managers.push(recovered);
+	await recovered.resume();
+	expect(recovered.status().jobs[0]).toMatchObject({ status: "blocked", blocker: expect.stringMatching(/ignored|unaccounted/i) });
+	expect(implementations).toBe(0);
+	expect(readFileSync(join(job!.worktree, "private-data", "local.db"), "utf8")).toBe("unaccounted interrupted data");
 });
 
 test("a timed-out queued review never dispatches after its worker slot becomes free", async () => {
@@ -135,6 +172,58 @@ test("crash recovery retains a running validation group and retries only after i
 		if (child.exitCode === null) { child.kill("SIGKILL"); await child.exited; }
 	}
 }, 20_000);
+
+test.each(["check", "model"])("crash recovery protects a shared target from sibling tickets while its %s group survives", async (mode) => {
+	const { root, repo, stateDir } = fixture();
+	const marker = join(root, "shared-check-starts");
+	const release = join(root, "release-shared-check");
+	const child = Bun.spawn([process.execPath, fileURLToPath(new URL("./fixtures/crash-shared-manager.ts", import.meta.url)), repo, stateDir, marker, release, mode], { stdout: "pipe", stderr: "pipe" });
+	let group: number | undefined;
+	try {
+		const deadline = Date.now() + 10_000;
+		while (!existsSync(marker) && Date.now() < deadline && child.exitCode === null) await Bun.sleep(10);
+		expect(existsSync(marker)).toBe(true);
+		group = Number(readFileSync(marker, "utf8").trim());
+		child.kill("SIGKILL");
+		await child.exited;
+		const implemented: string[] = [];
+		const worker = { async run(request: import("./manager").WorkerRequest) {
+			if (request.role === "implementer") {
+				const id = request.cwd.split("/").at(-1)!;
+				implemented.push(id);
+				writeFileSync(join(request.cwd, `${id}.txt`), id);
+				executeGit(request.cwd, ["add", "."]);
+				executeGit(request.cwd, ["commit", "-m", `Build ${id}`]);
+			}
+			return { text: "Reviewed", model: request.model, report: { revision: executeGit(request.cwd, ["rev-parse", "HEAD"]), verdict: "pass", findings: [] } };
+		} };
+		const recovered = new WorkManager({ stateDir, worker, model: { provider: "fixture", id: "local" } });
+		managers.push(recovered);
+		const target = recovered.status().jobs.find((job) => job.id === "target")!;
+		const before = executeGit(target.worktree, ["rev-parse", "HEAD"]);
+		await recovered.resume();
+		expect(() => process.kill(-group!, 0)).not.toThrow();
+		expect(executeGit(target.worktree, ["rev-parse", "HEAD"])).toBe(before);
+		expect(recovered.status().jobs.filter((job) => job.id !== "independent").map((job) => job.status)).toEqual(["blocked", "blocked", "blocked"]);
+		expect(implemented).toEqual(["independent"]);
+		expect(recovered.status().jobs.find((job) => job.id === "independent")?.status).toBe("ready");
+		writeFileSync(release, "release");
+		const drained = Date.now() + 5000;
+		while (Date.now() < drained) {
+			try { process.kill(-group, 0); } catch { break; }
+			await Bun.sleep(10);
+		}
+		await recovered.resume();
+		expect(recovered.status().jobs.map((job) => job.status)).toEqual(["ready", "ready", "ready", "ready"]);
+		expect(implemented.sort()).toEqual(["b", "independent"]);
+		expect(readFileSync(join(target.worktree, "a.txt"), "utf8")).toBe("a");
+		expect(readFileSync(join(target.worktree, "b.txt"), "utf8")).toBe("b");
+	} finally {
+		writeFileSync(release, "release");
+		if (child.exitCode === null) { child.kill("SIGKILL"); await child.exited; }
+		if (group) { try { process.kill(-group, "SIGKILL"); } catch {} }
+	}
+}, 30_000);
 
 test("a deliberate pause prevents new worker dispatch and survives reopening", async () => {
 	const { repo, stateDir } = fixture();
@@ -254,14 +343,20 @@ test("related tickets integrate into their own branch before dependent work and 
 	expect(readFileSync(join(repo, "value.txt"), "utf8")).toBe("original\n");
 }, 30_000);
 
-test("a failing implementation is repaired and receives fresh checks and independent reviews", async () => {
+test("a failing implementation is repaired through ignored build output and receives fresh checks and independent reviews", async () => {
 	const { repo, stateDir } = fixture();
+	writeFileSync(join(repo, ".gitignore"), "build-cache/\n");
+	executeGit(repo, ["add", ".gitignore"]);
+	executeGit(repo, ["commit", "-m", "Ignore generated build output"]);
 	let attempts = 0;
 	const reviewed: string[] = [];
 	const worker = { async run(request: import("./manager").WorkerRequest) {
 		if (request.role === "implementer") {
 			attempts++;
-			if (attempts === 2) expect(request.prompt).toContain("content");
+			if (attempts === 2) {
+				expect(request.prompt).toContain("content");
+				expect(readFileSync(join(request.cwd, "build-cache", "result"), "utf8")).toBe("cache");
+			}
 			writeFileSync(join(request.cwd, "value.txt"), attempts === 1 ? "wrong\n" : "correct\n");
 			executeGit(request.cwd, ["commit", "-am", `Attempt ${attempts}`]);
 		}
@@ -271,7 +366,7 @@ test("a failing implementation is repaired and receives fresh checks and indepen
 	} };
 	const manager = new WorkManager({ stateDir, worker, model: { provider: "fixture", id: "local" }, repairLimit: 1 });
 	managers.push(manager);
-	manager.submit([{ id: "one", repo, branch: "feature/one", task: "Set the correct value", acceptance: ["Value is correct"], checks: [{ name: "content", command: "test \"$(cat value.txt)\" = correct" }] }]);
+	manager.submit([{ id: "one", repo, branch: "feature/one", task: "Set the correct value", acceptance: ["Value is correct"], checks: [{ name: "content", command: "mkdir -p build-cache && printf cache > build-cache/result && test \"$(cat value.txt)\" = correct" }] }]);
 	await manager.start();
 	expect(manager.status().jobs[0]).toMatchObject({ status: "ready", attempt: 2 });
 	expect(new Set(reviewed).size).toBe(2);

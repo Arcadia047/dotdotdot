@@ -92,6 +92,9 @@ export class WorkManager {
 			if (job.status === "ready" || ("archivedAt" in job && job.archivedAt) || (this.execution && job.owner === this.owner)) continue;
 			try {
 				this.reconcileProcesses(job);
+				for (const worktree of [job.worktree, ...(job.integrationTarget ? [this.repository.get(job.integrationTarget)!.worktree] : [])]) {
+					if (executeGit(worktree, ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"])) throw new Error(`Resume retained ignored, unaccounted local files in ${worktree}; inspect and remove them explicitly before retrying.`);
+				}
 				const revision = this.current(job);
 				const runBase = this.metadata(job).runBase ?? job.base;
 				const candidate = job.candidate || (job.attempt > 0 && revision !== runBase) || job.kind === "integration" ? revision : undefined;
@@ -122,12 +125,27 @@ export class WorkManager {
 		return this.repository.archive(id);
 	}
 	private reconcileProcesses(job: Job): void {
-		for (const id of [job.id, job.integrationTarget].filter((id): id is string => !!id)) {
-			for (const directory of [join(this.options.stateDir, "processes", id), join(this.options.stateDir, "evidence", "processes", id)]) {
+		// Integration checks and reviewers keep the child ID but use the target's workspace.
+		const worktrees = new Set([job.worktree, ...(job.integrationTarget ? [this.repository.get(job.integrationTarget)!.worktree] : [])].map((path) => realpathSync(path)));
+		for (const recorded of this.repository.list()) {
+			const related = worktrees.has(recorded.worktree) || (recorded.integrationTarget && worktrees.has(this.repository.get(recorded.integrationTarget)!.worktree));
+			for (const directory of [join(this.options.stateDir, "processes", recorded.id), join(this.options.stateDir, "evidence", "processes", recorded.id)]) {
 				if (!existsSync(directory)) continue;
 				for (const file of readdirSync(directory).filter((file) => file.endsWith(".json"))) {
 					const path = join(directory, file);
-					const record = JSON.parse(readFileSync(path, "utf8"));
+					let record;
+					try { record = JSON.parse(readFileSync(path, "utf8")); }
+					catch (error) { if (related) throw error; else continue; }
+					if (!record || typeof record !== "object" || Array.isArray(record)) {
+						if (related) throw new Error(`Owned process record ${path} is invalid; retain its work for reconciliation.`);
+						continue;
+					}
+					const cwd = typeof record.cwd === "string" && existsSync(record.cwd) ? realpathSync(record.cwd) : record.cwd;
+					if (typeof cwd !== "string") {
+						if (related) throw new Error(`Owned process record ${path} has an unknown workspace; retain its work for reconciliation.`);
+						continue;
+					}
+					if (!worktrees.has(cwd)) continue;
 					if (record.ended === true) continue;
 					if (!Number.isSafeInteger(record.pid) || record.pid <= 0) throw new Error(`Owned process intent ${path} has unknown identity; retain its work and reconcile it explicitly.`);
 					const group = record.pgid ?? record.pid;
@@ -272,6 +290,7 @@ export class WorkManager {
 		if (job.attempt === 0 && starting !== job.base) throw new Error(`Job ${job.id} moved from its recorded starting revision; reconcile before editing.`);
 		if (job.integrationTarget && job.attempt === 0) {
 			const target = this.repository.get(job.integrationTarget)!;
+			this.reconcileProcesses(target);
 			executeGit(job.worktree, ["merge", "--ff-only", this.current(target)]);
 		}
 		this.writeRecord(join(this.options.stateDir, "job-meta", `${job.id}.json`), { runBase: this.current(job) });
@@ -291,10 +310,13 @@ export class WorkManager {
 		const tail = previous.catch(() => {}).then(() => lock);
 		this.integrations.set(targetId, tail);
 		await previous.catch(() => {});
+		let claimed = false;
 		try {
 			this.abort.signal.throwIfAborted();
 			const target = this.repository.get(targetId)!;
+			this.reconcileProcesses(target);
 			this.repository.claim(targetId, this.owner);
+			claimed = true;
 			const before = this.current(target);
 			const source = this.current(job);
 			const recordPath = join(this.options.stateDir, "integrations", `${job.id}.json`);
@@ -332,7 +354,7 @@ export class WorkManager {
 				if (result.disposition === "blocked") throw new Error(`Integration is not ready: ${failure}`);
 			}
 		} finally {
-			try { this.repository.release(targetId, this.owner); }
+			try { if (claimed) this.repository.release(targetId, this.owner); }
 			finally {
 				unlock();
 				if (this.integrations.get(targetId) === tail) this.integrations.delete(targetId);
@@ -347,6 +369,7 @@ export class WorkManager {
 		let job = initial;
 		let feedback = "";
 		try {
+			this.reconcileProcesses(job);
 			const gate = await this.gate(job);
 			const repairs = this.options.repairLimit ?? 2;
 			if (!Number.isSafeInteger(repairs) || repairs < 0) throw new Error("repairLimit must be a nonnegative integer.");
