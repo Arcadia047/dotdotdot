@@ -277,6 +277,7 @@ export class WorkManager {
 		this.integrations.set(targetId, tail);
 		await previous.catch(() => {});
 		try {
+			this.abort.signal.throwIfAborted();
 			const target = this.repository.get(targetId)!;
 			this.repository.claim(targetId, this.owner);
 			const before = this.current(target);
@@ -284,15 +285,23 @@ export class WorkManager {
 			const recordPath = join(this.options.stateDir, "integrations", `${job.id}.json`);
 			const prior = existsSync(recordPath) ? JSON.parse(readFileSync(recordPath, "utf8")) : undefined;
 			const comparisonBase = prior?.source === source && prior?.targetId === targetId ? prior.before : before;
-			this.writeRecord(recordPath, { state: "pending", source, before: comparisonBase, targetId });
+			if (typeof comparisonBase !== "string" || !/^[0-9a-f]{40,64}$/.test(comparisonBase)) throw new Error("Integration record has an invalid comparison revision; reconcile it before retrying.");
+			let repairAttempts = prior?.repairAttempts ?? 0;
+			if (!Number.isSafeInteger(repairAttempts) || repairAttempts < 0) throw new Error("Integration repair count is invalid; reconcile its retained record.");
+			this.writeRecord(recordPath, { state: "pending", source, before: comparisonBase, targetId, repairAttempts });
 			let failure = "";
 			try {
 				try { executeGit(target.worktree, ["merge-base", "--is-ancestor", source, before]); }
 				catch { executeGit(target.worktree, ["merge", "--no-ff", "--no-edit", source]); }
 			} catch (error) { failure = `Resolve the in-progress merge of ${source} into this owned integration branch. ${error instanceof Error ? error.message : String(error)}`; }
 			const gate = await this.gate(job);
-			for (let repairs = 0; repairs <= (this.options.repairLimit ?? 2); repairs++) {
-				if (failure) await this.repair({ ...target, attempt: repairs + 1 }, `${failure}\nPreserve the merge history; the source commit must be an ancestor when complete. Only repair this integration and the following ticket: ${job.task}`, "integrator");
+			while (true) {
+				if (failure) {
+					if (repairAttempts >= (this.options.repairLimit ?? 2)) throw new Error(`Integration repair budget exhausted. ${failure}`);
+					repairAttempts++;
+					this.writeRecord(recordPath, { state: "pending", source, before: comparisonBase, targetId, repairAttempts });
+					await this.repair({ ...target, attempt: repairAttempts }, `${failure}\nPreserve the merge history; the source commit must be an ancestor when complete. Only repair this integration and the following ticket: ${job.task}`, "integrator");
+				}
 				const revision = this.current(target);
 				executeGit(target.worktree, ["merge-base", "--is-ancestor", source, revision]);
 				const combined = { ...job, worktree: target.worktree, branch: target.branch, base: comparisonBase, candidate: revision };
@@ -301,16 +310,18 @@ export class WorkManager {
 				if (result.passed) {
 					gate.assertCurrent(combined, result);
 					this.repository.update(targetId, { candidate: revision });
-					this.writeRecord(recordPath, { state: "completed", source, before: comparisonBase, targetId, revision, receiptFile: result.receiptFile });
+					this.writeRecord(recordPath, { state: "completed", source, before: comparisonBase, targetId, revision, repairAttempts, receiptFile: result.receiptFile });
 					return;
 				}
 				failure = result.failures.join("\n");
-				if (result.disposition === "blocked" || repairs === (this.options.repairLimit ?? 2)) throw new Error(`Integration is not ready: ${failure}`);
+				if (result.disposition === "blocked") throw new Error(`Integration is not ready: ${failure}`);
 			}
 		} finally {
-			this.repository.release(targetId, this.owner);
-			unlock();
-			if (this.integrations.get(targetId) === tail) this.integrations.delete(targetId);
+			try { this.repository.release(targetId, this.owner); }
+			finally {
+				unlock();
+				if (this.integrations.get(targetId) === tail) this.integrations.delete(targetId);
+			}
 		}
 	}
 	private event(id: string, message: string): void {

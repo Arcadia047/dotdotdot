@@ -314,3 +314,32 @@ test("recovery after SIGKILL reconciles an unreported commit without rerunning i
 		expect(executeGit(repo, ["rev-list", "--count", "feature/crash"])).toBe("2");
 	} finally { if (child.exitCode === null) { child.kill("SIGKILL"); await child.exited; } }
 }, 30_000);
+
+test("a zero repair budget preserves a conflicted integration without starting a repair worker", async () => {
+	const { repo, stateDir } = fixture();
+	let repairs = 0;
+	const worker = { async run(request: import("./manager").WorkerRequest) {
+		const id = request.cwd.split("/").at(-1)!;
+		if (request.role === "implementer") {
+			writeFileSync(join(request.cwd, "value.txt"), `${id.toUpperCase()}\n`);
+			executeGit(request.cwd, ["commit", "-am", `Build ${id}`]);
+		} else if (request.role === "integrator") {
+			repairs++;
+			writeFileSync(join(request.cwd, "value.txt"), "A\nB\n");
+			executeGit(request.cwd, ["add", "."]);
+			executeGit(request.cwd, ["commit", "-m", "Resolve conflict"]);
+		}
+		return { text: "Candidate", model: request.model, report: { revision: executeGit(request.cwd, ["rev-parse", "HEAD"]), verdict: "pass", findings: [] } };
+	} };
+	const manager = new WorkManager({ stateDir, worker, model: { provider: "fixture", id: "local" }, repairLimit: 0 });
+	managers.push(manager);
+	manager.submit([
+		{ id: "feature", kind: "integration", repo, branch: "feature/all", task: "Deliver both values", acceptance: ["A and B present"], checks: [{ name: "both", command: "grep -q A value.txt && grep -q B value.txt" }], dependsOn: ["a", "b"] },
+		...["a", "b"].map((id) => ({ id, repo, branch: `feature/${id}`, task: `Set ${id}`, acceptance: [`${id} is present`], checks: [{ name: "content", command: `grep -q ${id.toUpperCase()} value.txt` }], integrationTarget: "feature" })),
+	]);
+	await manager.start();
+	expect(repairs).toBe(0);
+	expect(manager.status().jobs[0]?.status).toBe("blocked");
+	expect(readFileSync(join(manager.status().jobs[0]!.worktree, "value.txt"), "utf8")).toContain("<<<<<<<");
+	expect(readFileSync(join(repo, "value.txt"), "utf8")).toBe("original\n");
+}, 30_000);
