@@ -25,3 +25,6 @@ Temporary Items
 
 # Local Python check artifacts
 __pycache__/
+
+# OMP workflow development dependencies (runtime uses OMP's embedded Bun).
+omp/node_modules/
