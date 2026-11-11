@@ -343,6 +343,53 @@ test("related tickets integrate into their own branch before dependent work and 
 	expect(readFileSync(join(repo, "value.txt"), "utf8")).toBe("original\n");
 }, 30_000);
 
+test("more sibling tickets than worker slots finish while supervised integration checks serialize", async () => {
+	const { root, repo, stateDir } = fixture();
+	const reviewed = join(root, "b-reviewed");
+	const checking = join(root, "b-checking");
+	const release = join(root, "release-b-check");
+	const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+	let active = 0;
+	let peak = 0;
+	const worker = { async run(request: import("./manager").WorkerRequest) {
+		if (request.role === "implementer") {
+			active++;
+			peak = Math.max(peak, active);
+			await Bun.sleep(20);
+			const id = request.cwd.split("/").at(-1)!;
+			writeFileSync(join(request.cwd, `${id}.txt`), id);
+			executeGit(request.cwd, ["add", "."]);
+			executeGit(request.cwd, ["commit", "-m", `Build ${id}`]);
+			active--;
+		}
+		if (request.role === "technical-reviewer" && request.cwd.endsWith("/b")) writeFileSync(reviewed, "reviewed");
+		return { text: "Candidate", model: request.model, report: { revision: executeGit(request.cwd, ["rev-parse", "HEAD"]), verdict: "pass", findings: [] } };
+	} };
+	const manager = new WorkManager({ stateDir, worker, model: { provider: "fixture", id: "local" }, maxWorkers: 2 });
+	managers.push(manager);
+	manager.submit([
+		{ id: "feature", kind: "integration", repo, branch: "feature/all", task: "Deliver all three tickets", acceptance: ["All three files exist"], checks: [{ name: "combined", command: "test -f a.txt && test -f b.txt && test -f c.txt" }], dependsOn: ["a", "b", "c"] },
+		...["a", "b", "c"].map((id) => ({ id, repo, branch: `feature/${id}`, task: `Build ${id}`, acceptance: [`${id} exists`], checks: [{ name: "content", command: `test -f ${id}.txt && if test "$(basename "$PWD")" = feature; then ${id === "a" ? `while ! test -f ${quote(reviewed)}; do sleep 0.01; done` : id === "b" ? `touch ${quote(checking)}; while ! test -f ${quote(release)}; do sleep 0.01; done` : "true"}; fi` }], integrationTarget: "feature" })),
+	]);
+	const running = manager.start();
+	try {
+		const deadline = Date.now() + 10_000;
+		while (!existsSync(checking) && Date.now() < deadline) await Bun.sleep(10);
+		expect(existsSync(checking)).toBe(true);
+		while (Date.now() < deadline) {
+			const c = manager.status().jobs.find((job) => job.id === "c")!;
+			if (c.owner || c.status === "blocked") break;
+			await Bun.sleep(10);
+		}
+		const c = manager.status().jobs.find((job) => job.id === "c")!;
+		expect(!!c.owner || c.status === "blocked").toBe(true);
+		writeFileSync(release, "release");
+		await running;
+	} finally { writeFileSync(release, "release"); }
+	expect(peak).toBe(2);
+	expect(manager.status().jobs.map((job) => [job.id, job.status])).toEqual([["feature", "ready"], ["a", "ready"], ["b", "ready"], ["c", "ready"]]);
+}, 30_000);
+
 test("a failing implementation is repaired through ignored build output and receives fresh checks and independent reviews", async () => {
 	const { repo, stateDir } = fixture();
 	writeFileSync(join(repo, ".gitignore"), "build-cache/\n");

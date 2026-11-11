@@ -124,9 +124,9 @@ export class WorkManager {
 		executeGit(job.repo, ["worktree", "remove", job.worktree]);
 		return this.repository.archive(id);
 	}
-	private reconcileProcesses(job: Job): void {
+	private reconcileProcesses(job: Job, includeTarget = true): void {
 		// Integration checks and reviewers keep the child ID but use the target's workspace.
-		const worktrees = new Set([job.worktree, ...(job.integrationTarget ? [this.repository.get(job.integrationTarget)!.worktree] : [])].map((path) => realpathSync(path)));
+		const worktrees = new Set([job.worktree, ...(includeTarget && job.integrationTarget ? [this.repository.get(job.integrationTarget)!.worktree] : [])].map((path) => realpathSync(path)));
 		for (const recorded of this.repository.list()) {
 			const related = worktrees.has(recorded.worktree) || (recorded.integrationTarget && worktrees.has(this.repository.get(recorded.integrationTarget)!.worktree));
 			for (const directory of [join(this.options.stateDir, "processes", recorded.id), join(this.options.stateDir, "evidence", "processes", recorded.id)]) {
@@ -275,7 +275,7 @@ export class WorkManager {
 	private effective(job: Job): Job {
 		return { ...job, base: this.metadata(job).runBase ?? job.base };
 	}
-	private prepare(job: Job): void {
+	private async prepare(job: Job): Promise<void> {
 		const starting = this.current(job);
 		const known = this.metadata(job).runBase;
 		if (known) {
@@ -290,6 +290,8 @@ export class WorkManager {
 		if (job.attempt === 0 && starting !== job.base) throw new Error(`Job ${job.id} moved from its recorded starting revision; reconcile before editing.`);
 		if (job.integrationTarget && job.attempt === 0) {
 			const target = this.repository.get(job.integrationTarget)!;
+			while (this.integrations.has(target.id)) await this.integrations.get(target.id);
+			this.abort.signal.throwIfAborted();
 			this.reconcileProcesses(target);
 			executeGit(job.worktree, ["merge", "--ff-only", this.current(target)]);
 		}
@@ -369,7 +371,7 @@ export class WorkManager {
 		let job = initial;
 		let feedback = "";
 		try {
-			this.reconcileProcesses(job);
+			this.reconcileProcesses(job, false);
 			const gate = await this.gate(job);
 			const repairs = this.options.repairLimit ?? 2;
 			if (!Number.isSafeInteger(repairs) || repairs < 0) throw new Error("repairLimit must be a nonnegative integer.");
@@ -379,7 +381,7 @@ export class WorkManager {
 				if ((job.kind === "implementation" && !job.candidate) || feedback) {
 					const writesAllowed = repairs + (job.kind === "implementation" ? 1 : 0);
 					if (job.attempt >= writesAllowed) throw new Error(`Repair budget exhausted for ${job.id}; provide a corrected candidate or explicitly revise the local budget.`);
-					this.prepare(job);
+					await this.prepare(job);
 					job = this.repository.update(job.id, { status: "running", attempt: job.attempt + 1 });
 					await this.repair(job, feedback, job.kind === "integration" ? "integrator" : "implementer");
 				}
