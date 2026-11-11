@@ -1,0 +1,1 @@
+Use the single-context layout: `GLOSSARY.md` and `docs/adr/` at the repository root. Read relevant entries when present; proceed silently when they do not exist. Create them lazily when terms or consequential decisions are actually settled. Keep the glossary free of implementation details. Surface a conflicting architectural decision before overriding it.

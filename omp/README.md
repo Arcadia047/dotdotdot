@@ -1,5 +1,14 @@
 # Oh My Pi integration
 
+## Agent workflow design
+
+[Roles and capability requirements](roles-and-capabilities.md) defines the planned
+agent responsibilities, required evidence, and local assessment process for
+choosing models from different catalogs. It contains no model selections and
+does not install or enable the workflow. See the
+[parallel-work proposal](../docs/omp-agentic-workflow-research.md) for branch
+isolation, coordination, and completion gates.
+
 ## Images in tmux
 
 `zsh/omp.zsh` selects `PI_FORCE_IMAGE_PROTOCOL=sixel` for an `omp` launch when
