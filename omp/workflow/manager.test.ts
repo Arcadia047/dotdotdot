@@ -112,3 +112,84 @@ test("a failed prerequisite blocks its dependents while unrelated work still bec
 	expect(manager.status().jobs.find((job) => job.id === "independent")?.status).toBe("ready");
 	expect(manager.status().jobs.find((job) => job.id === "dependent")).toMatchObject({ status: "blocked", blocker: expect.stringContaining("broken") });
 });
+
+test("related tickets integrate into their own branch before dependent work and final validation", async () => {
+	const { repo, stateDir } = fixture();
+	const worker = { async run(request: import("./manager").WorkerRequest) {
+		const id = request.cwd.split("/").at(-1)!;
+		if (request.role === "implementer") {
+			if (id === "combine") {
+				expect(readFileSync(join(request.cwd, "a.txt"), "utf8")).toBe("A");
+				expect(readFileSync(join(request.cwd, "b.txt"), "utf8")).toBe("B");
+				writeFileSync(join(request.cwd, "combined.txt"), "AB");
+			} else writeFileSync(join(request.cwd, `${id}.txt`), id.toUpperCase());
+			executeGit(request.cwd, ["add", "."]);
+			executeGit(request.cwd, ["commit", "-m", `Build ${id}`]);
+		}
+		return { text: "Candidate", model: request.model, report: { revision: executeGit(request.cwd, ["rev-parse", "HEAD"]), verdict: "pass", findings: [] } };
+	} };
+	const manager = new WorkManager({ stateDir, worker, model: { provider: "fixture", id: "local" }, maxWorkers: 2 });
+	managers.push(manager);
+	manager.submit([
+		{ id: "feature", kind: "integration", repo, branch: "feature/all", task: "Deliver A and B combined", acceptance: ["Combined value is AB"], checks: [{ name: "combined", command: "test \"$(cat combined.txt)\" = AB" }], dependsOn: ["a", "b", "combine"] },
+		...["a", "b", "combine"].map((id) => ({ id, repo, branch: `feature/${id}`, task: `Build ${id}`, acceptance: [`${id} is delivered`], checks: [{ name: "content", command: `test -f ${id === "combine" ? "combined" : id}.txt` }], integrationTarget: "feature", dependsOn: id === "combine" ? ["a", "b"] : [] })),
+	]);
+	await manager.start();
+	expect(manager.status().jobs.map((job) => [job.id, job.status])).toEqual([["feature", "ready"], ["a", "ready"], ["b", "ready"], ["combine", "ready"]]);
+	const result = manager.status().jobs[0]!;
+	expect(readFileSync(join(result.worktree, "combined.txt"), "utf8")).toBe("AB");
+	expect(executeGit(repo, ["branch", "--show-current"])).toBe("main");
+	expect(readFileSync(join(repo, "value.txt"), "utf8")).toBe("original\n");
+});
+
+test("a failing implementation is repaired and receives fresh checks and independent reviews", async () => {
+	const { repo, stateDir } = fixture();
+	let attempts = 0;
+	const reviewed: string[] = [];
+	const worker = { async run(request: import("./manager").WorkerRequest) {
+		if (request.role === "implementer") {
+			attempts++;
+			if (attempts === 2) expect(request.prompt).toContain("content");
+			writeFileSync(join(request.cwd, "value.txt"), attempts === 1 ? "wrong\n" : "correct\n");
+			executeGit(request.cwd, ["commit", "-am", `Attempt ${attempts}`]);
+		}
+		const revision = executeGit(request.cwd, ["rev-parse", "HEAD"]);
+		if (request.role?.includes("reviewer")) reviewed.push(revision);
+		return { text: "Candidate", model: request.model, report: { revision, verdict: "pass", findings: [] } };
+	} };
+	const manager = new WorkManager({ stateDir, worker, model: { provider: "fixture", id: "local" }, repairLimit: 1 });
+	managers.push(manager);
+	manager.submit([{ id: "one", repo, branch: "feature/one", task: "Set the correct value", acceptance: ["Value is correct"], checks: [{ name: "content", command: "test \"$(cat value.txt)\" = correct" }] }]);
+	await manager.start();
+	expect(manager.status().jobs[0]).toMatchObject({ status: "ready", attempt: 2 });
+	expect(new Set(reviewed).size).toBe(2);
+	expect(attempts).toBe(2);
+});
+
+test("the final combined result is repaired when individually green tickets are insufficient", async () => {
+	const { repo, stateDir } = fixture();
+	let integratedRepairs = 0;
+	const worker = { async run(request: import("./manager").WorkerRequest) {
+		const id = request.cwd.split("/").at(-1)!;
+		if (request.role === "implementer") {
+			writeFileSync(join(request.cwd, `${id}.txt`), id);
+			executeGit(request.cwd, ["add", "."]);
+			executeGit(request.cwd, ["commit", "-m", `Build ${id}`]);
+		} else if (request.role === "integrator") {
+			integratedRepairs++;
+			writeFileSync(join(request.cwd, "ready.txt"), "ready");
+			executeGit(request.cwd, ["add", "."]);
+			executeGit(request.cwd, ["commit", "-m", "Complete combined behavior"]);
+		}
+		return { text: "Candidate", model: request.model, report: { revision: executeGit(request.cwd, ["rev-parse", "HEAD"]), verdict: "pass", findings: [] } };
+	} };
+	const manager = new WorkManager({ stateDir, worker, model: { provider: "fixture", id: "local" } });
+	managers.push(manager);
+	manager.submit([
+		{ id: "feature", kind: "integration", repo, branch: "feature/all", task: "Deliver A and B with a final ready marker", acceptance: ["Both tickets and final marker are present"], checks: [{ name: "combined", command: "test -f a.txt && test -f b.txt && test -f ready.txt" }], dependsOn: ["a", "b"] },
+		...["a", "b"].map((id) => ({ id, repo, branch: `feature/${id}`, task: `Create ${id}.txt`, acceptance: [`${id}.txt is present`], checks: [{ name: "content", command: `test -f ${id}.txt` }], integrationTarget: "feature" })),
+	]);
+	await manager.start();
+	expect(manager.status().jobs[0]).toMatchObject({ status: "ready" });
+	expect(integratedRepairs).toBe(1);
+}, 30_000);
