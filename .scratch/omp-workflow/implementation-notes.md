@@ -1,6 +1,6 @@
 # Implementation notes
 
-Approved public seams: work-manager behavior and supported OMP process/RPC adapter. User approved local tracker, default statuses, AGENTS.md, spec, all eight tickets and tests. Original checkout has unrelated modifications; build only in /tmp/dotdotdot-omp-work-manager on codex/omp-work-manager. Initial spec/setup commit 8fd5783; original base 2543722.
+Approved public seams: work-manager behavior and supported OMP process/RPC adapter. User approved local tracker, default statuses, AGENTS.md, spec, all eight tickets and tests. Original checkout has unrelated modifications; the build remains isolated on codex/omp-work-manager. Its initial /tmp/dotdotdot-omp-work-manager worktree was moved to /Users/satsn/projects/dotdotdot/.worktrees/omp-work-manager for persistence. Initial spec/setup commit 8fd5783; original base 2543722. The final evidence and operating limits belong in [verification.md](verification.md).
 
 ## Runtime direction
 
