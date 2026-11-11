@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="referrer" content="no-referrer">
+  <title>OMP Work</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to work</a>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="OMP Work navigation">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 28 28" fill="none" aria-hidden="true"><path d="M7 5v18M7 10h8a6 6 0 0 0 6-6M7 18h8a6 6 0 0 1 6 6" stroke="currentColor" stroke-width="2"/><circle cx="7" cy="5" r="2.5" fill="currentColor"/><circle cx="21" cy="4" r="2.5" fill="currentColor"/><circle cx="21" cy="24" r="2.5" fill="currentColor"/></svg>
+        <span>OMP <strong>Work</strong></span>
+      </div>
+      <div class="scope"><span class="scope-label">Local profile</span><span id="profile">Connecting…</span></div>
+      <nav class="navigation" aria-label="Work views">
+        <button class="nav-button" data-view="overview" aria-current="page">Overview</button>
+        <button class="nav-button" data-view="all">All work</button>
+        <button class="nav-button" data-view="history">History</button>
+      </nav>
+      <div class="sidebar-foot"><span class="local-dot" aria-hidden="true"></span><span>One local manager<br><span class="muted">Your current OMP session</span></span></div>
+    </aside>
+    <header class="topbar">
+      <span class="context">Local work manager</span>
+      <div class="dispatch-controls"><span id="dispatchState">Connecting…</span><button id="dispatchToggle" class="button button-small" disabled title="Connect to the manager to control dispatch">Pause dispatch</button></div>
+    </header>
+    <main id="main" class="sheet" tabindex="-1">
+      <div class="page-heading"><div><h1 id="pageTitle">Work overview</h1><p id="finding">Reading your local queue…</p></div><div class="freshness"><span id="freshness">Waiting for first update</span><button id="refresh" class="text-button">Refresh</button></div></div>
+      <div id="connectionNotice" class="notice" role="status" hidden></div>
+      <div id="commandNotice" class="notice" role="status" hidden></div>
+      <div id="managerNotice" class="notice" role="status" hidden></div>
+      <div class="toolbar">
+        <div class="search-field"><label for="search">Find work</label><input id="search" type="search" autocomplete="off" placeholder="Title, repository, branch or ID"></div>
+        <div class="filter-field"><label for="bucketFilter">Queue</label><select id="bucketFilter"><option value="all">All queues</option><option value="attention">Needs you</option><option value="active">Active</option><option value="waiting">Waiting</option><option value="ready">Ready</option><option value="archived">History</option></select></div>
+      </div>
+      <div id="workContent" aria-busy="true">
+        <section class="attention-section"><div class="section-heading"><h2>Needs you</h2><span class="skeleton skeleton-count" aria-hidden="true"></span></div><div class="loading-row"><span class="skeleton skeleton-title"></span><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-line short"></span><p class="muted">Loading local work…</p></div></section>
+      </div>
+      <footer class="sheet-footer"><span>Local queue · Branches stay local</span><span>Checks and reviews are shown per candidate</span></footer>
+    </main>
+  </div>
+  <dialog id="jobDialog" class="job-dialog" aria-labelledby="detailTitle">
+    <div class="dialog-heading"><span>Job details</span><button id="detailClose" class="text-button" autofocus>Close <span aria-hidden="true">×</span></button></div>
+    <div id="detailContent" class="detail-content"></div>
+  </dialog>
+  <div id="announcements" class="sr-only" role="status" aria-live="polite"></div>
+  <noscript><p class="noscript">OMP Work needs JavaScript to read the local manager. Enable it, then reopen the dashboard URL from OMP.</p></noscript>
+</body>
+</html>
