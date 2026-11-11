@@ -49,9 +49,20 @@
   function announce(message) { $("announcements").textContent = message; }
   function shortSha(value) { return value ? value.slice(0, 8) : "No candidate"; }
   function plural(count, noun = "job") { return `${count.toLocaleString()} ${noun}${count === 1 ? "" : "s"}`; }
+  function unresolvedDependencies(job) {
+    return job.dependsOn.filter((id) => state.snapshot?.jobs.find((item) => item.id === id)?.status !== "ready");
+  }
+  function recoveryNeeded() {
+    return Boolean(state.snapshot?.jobs.some((job) => job.bucket === "attention" && job.phase === "recovery"));
+  }
+  function shouldResumeDispatch() {
+    const snapshot = state.snapshot;
+    return Boolean(snapshot && (snapshot.paused || (!snapshot.controllerActive && (snapshot.counts.waiting || snapshot.counts.attention))));
+  }
   function phaseLabel(job) {
     if (job.bucket === "archived") return "Archived";
-    if (job.bucket === "waiting") return job.dependsOn.length ? "Prerequisite waiting" : state.snapshot?.paused ? "Dispatch paused" : "Queued";
+    if (job.phase === "recovery") return "Needs recovery";
+    if (job.bucket === "waiting") return unresolvedDependencies(job).length ? "Prerequisite waiting" : state.snapshot?.paused ? "Dispatch paused" : state.snapshot?.controllerActive ? "Worker capacity" : "Dispatch idle";
     const labels = {
       queued: "Queued", running: job.kind === "integration" ? "Integration work" : "Implementation",
       checking: "Checks & reviews", reviewing: "Independent reviews", integrating: "Integration",
@@ -70,16 +81,19 @@
     const strings = (value) => Array.isArray(value) && value.every((item) => typeof item === "string");
     const optionalString = (value) => value === undefined || typeof value === "string";
     const dateString = (value) => typeof value === "string" && Number.isFinite(new Date(value).valueOf());
-    if (!isObject(data) || data.version !== 1 || !dateString(data.generatedAt) || typeof data.profile !== "string" || typeof data.paused !== "boolean" || !optionalString(data.actionError) || !Array.isArray(data.jobs) || !isObject(data.counts)) throw new Error("The manager returned an unsupported status response.");
+    if (!isObject(data) || data.version !== 1 || !dateString(data.generatedAt) || typeof data.profile !== "string" || typeof data.paused !== "boolean" || typeof data.controllerActive !== "boolean" || !optionalString(data.actionError) || !Array.isArray(data.jobs) || !isObject(data.counts)) throw new Error("The manager returned an unsupported status response.");
     const ids = new Set();
     const totals = Object.fromEntries(buckets.map((bucket) => [bucket, 0]));
     for (const job of data.jobs) {
       if (!isObject(job) || !["id", "title", "task", "repo", "repoName", "branch", "worktree", "phase"].every((key) => typeof job[key] === "string") || !job.id || ids.has(job.id) || !Object.hasOwn(statusLabels, job.status) || !buckets.includes(job.bucket) || !Number.isInteger(job.attempt) || job.attempt < 0 || !["implementation", "integration"].includes(job.kind) || !strings(job.dependsOn) || !dateString(job.updatedAt) || (job.archivedAt !== undefined && !dateString(job.archivedAt)) || ![job.candidate, job.integrationTarget, job.blocker].every(optionalString) || typeof job.canResume !== "boolean") throw new Error("The manager returned an incomplete job record.");
       if (job.attention !== undefined && (!isObject(job.attention) || typeof job.attention.reason !== "string" || typeof job.attention.nextAction !== "string")) throw new Error("The manager returned an incomplete attention record.");
+      for (const evidence of [job.evidence, ...(job.integrationEvidence === undefined ? [] : [job.integrationEvidence])]) {
+        if (!isObject(evidence) || typeof evidence.available !== "boolean" || typeof evidence.current !== "boolean" || ![evidence.revision, evidence.branch, evidence.receiptFile].every(optionalString) || !Array.isArray(evidence.checks) || !Array.isArray(evidence.reviews)) throw new Error("The manager returned an incomplete evidence record.");
+        if (!evidence.checks.every((check) => isObject(check) && typeof check.name === "string" && typeof check.status === "string" && (check.exitCode === null || Number.isInteger(check.exitCode))) || !evidence.reviews.every((review) => isObject(review) && ["spec", "standards"].includes(review.axis) && typeof review.status === "string" && optionalString(review.verdict))) throw new Error("The manager returned invalid validation evidence.");
+      }
       const evidence = job.evidence;
-      if (!isObject(evidence) || typeof evidence.available !== "boolean" || typeof evidence.current !== "boolean" || ![evidence.revision, evidence.receiptFile].every(optionalString) || !Array.isArray(evidence.checks) || !Array.isArray(evidence.reviews)) throw new Error("The manager returned an incomplete evidence record.");
-      if (!evidence.checks.every((check) => isObject(check) && typeof check.name === "string" && typeof check.status === "string" && (check.exitCode === null || Number.isInteger(check.exitCode))) || !evidence.reviews.every((review) => isObject(review) && ["spec", "standards"].includes(review.axis) && typeof review.status === "string" && optionalString(review.verdict))) throw new Error("The manager returned invalid validation evidence.");
-      if (evidence.current && (!evidence.available || job.bucket !== "ready" || job.status !== "ready" || job.archivedAt || !job.candidate || evidence.revision !== job.candidate)) throw new Error("The manager returned validation evidence that does not match a current ready candidate.");
+      if (evidence.current && (!evidence.available || job.bucket !== "ready" || job.status !== "ready" || job.archivedAt || !job.candidate || evidence.revision !== job.candidate || (evidence.branch !== undefined && evidence.branch !== job.branch))) throw new Error("The manager returned validation evidence that does not match a current ready candidate.");
+      if (job.integrationEvidence?.current) throw new Error("The manager returned a recorded integration attempt as current validation.");
       ids.add(job.id);
       totals[job.bucket] += 1;
     }
@@ -100,14 +114,15 @@
   function updateControlButtons() {
     const available = canControl();
     const toggle = $("dispatchToggle");
-    const paused = state.snapshot?.paused;
-    toggle.textContent = state.pending ? "Working…" : paused ? "Resume all work" : "Pause dispatch";
+    const resume = shouldResumeDispatch();
+    toggle.textContent = state.pending ? "Working…" : resume ? "Resume all work" : "Pause dispatch";
     toggle.disabled = !available;
-    toggle.title = available ? paused ? "Resume dispatch and reconcile blocked or interrupted jobs through the existing recovery guards" : "Pause new dispatch; running work continues" : controlDisabledReason();
+    toggle.title = available ? resume ? "Resume dispatch and reconcile retained jobs through the existing recovery guards" : "Pause new dispatch; running work continues" : controlDisabledReason();
     document.querySelectorAll("[data-resume-job]").forEach((node) => {
-      node.textContent = state.snapshot?.paused ? "Resume job & dispatch" : "Resume job";
+      const startsDispatch = state.snapshot?.paused || !state.snapshot?.controllerActive;
+      node.textContent = startsDispatch ? "Resume job & dispatch" : "Resume job";
       node.disabled = !available;
-      node.title = available ? state.snapshot?.paused ? "Resume this job through the recovery guards and resume dispatch for eligible work" : "Ask the manager to resume this job through its recovery guards" : controlDisabledReason();
+      node.title = available ? startsDispatch ? "Resume this job through the recovery guards and resume dispatch for eligible work" : "Ask the manager to resume this job through its recovery guards" : controlDisabledReason();
     });
   }
 
@@ -123,13 +138,15 @@
 
   function renderConnection() {
     const snapshot = state.snapshot;
-    $("dispatchState").textContent = snapshot ? snapshot.paused ? "Dispatch paused" : "Dispatch running" : "Not connected";
+    $("dispatchState").textContent = snapshot ? snapshot.paused ? "Dispatch paused" : recoveryNeeded() ? "Recovery needed" : snapshot.controllerActive ? "Dispatch running" : "Dispatch idle" : "Not connected";
     $("freshness").textContent = snapshot ? `${state.connected ? "Updated" : "Last updated"} ${timestamp(snapshot.generatedAt)}` : "Waiting for first update";
     $("freshness").title = snapshot ? timestamp(snapshot.generatedAt, true) : "";
     if (!token || state.authFailed) notice("connectionNotice", "This dashboard link is missing or no longer authorized. Run /work dashboard in OMP and open the fresh URL.", "error");
     else if (!state.connected && state.error) notice("connectionNotice", snapshot ? `Connection lost. Showing the snapshot from ${timestamp(snapshot.generatedAt, true)}. Controls are unavailable. ${state.error}` : `Could not read the local queue. ${state.error}`, "error", true);
     else if (snapshot?.paused) notice("connectionNotice", "Dispatch is paused. Running work may finish. Resume all work also reconciles blocked and interrupted jobs.", "neutral");
     else if (!state.connected && snapshot) notice("connectionNotice", `Reconnecting. Showing the snapshot from ${timestamp(snapshot.generatedAt, true)}; controls are unavailable.`, "");
+    else if (recoveryNeeded()) notice("connectionNotice", "The previous manager stopped. Retained work needs recovery. Resume all work reconciles it through the existing guards.", "neutral");
+    else if (snapshot && !snapshot.controllerActive && shouldResumeDispatch()) notice("connectionNotice", "Dispatch is idle. Resume all work starts eligible jobs and reconciles retained work.", "neutral");
     else notice("connectionNotice", "", "");
     if ($("detailConnectionNotice")) {
       const source = $("connectionNotice");
@@ -138,6 +155,7 @@
     notice("commandNotice", state.message, state.message.startsWith("Action failed") ? "error" : "neutral");
     if ($("detailCommandNotice")) notice("detailCommandNotice", state.message, state.message.startsWith("Action failed") ? "error" : "neutral");
     notice("managerNotice", snapshot?.actionError ? `Manager action: ${snapshot.actionError}` : "", "error");
+    if ($("detailManagerNotice")) notice("detailManagerNotice", snapshot?.actionError ? `Manager action: ${snapshot.actionError}` : "", "error");
     updateControlButtons();
   }
 
@@ -165,7 +183,7 @@
   }
 
   function statusPill(job) {
-    return element("span", `status${["attention", "active", "ready"].includes(job.bucket) ? ` status-${job.bucket}` : ""}`, statusLabels[job.status]);
+    return element("span", `status${["attention", "active", "ready"].includes(job.bucket) ? ` status-${job.bucket}` : ""}`, job.phase === "recovery" ? "Needs recovery" : statusLabels[job.status]);
   }
 
   function jobTitle(job, prefix) {
@@ -218,8 +236,8 @@
     line.append(branch, element("span", "stage-arrow", "→"), stage);
     row.append(line);
     if (job.bucket === "waiting") {
-      const names = job.dependsOn.map((id) => state.snapshot.jobs.find((item) => item.id === id)?.title || id);
-      row.append(element("p", "waiting-note", names.length ? `Depends on: ${names.join(", ")}` : job.blocker || (state.snapshot.paused ? "Waiting for dispatch to resume." : "Waiting for an eligible dispatch slot.")));
+      const names = unresolvedDependencies(job).map((id) => state.snapshot.jobs.find((item) => item.id === id)?.title || id);
+      row.append(element("p", "waiting-note", names.length ? `Waiting on: ${names.join(", ")}` : state.snapshot.paused ? "Waiting for dispatch to resume." : state.snapshot.controllerActive ? "Waiting for an eligible worker slot." : "Resume all work to dispatch this job."));
     } else if (job.candidate) {
       const candidate = element("div", "job-context");
       candidate.append(element("code", "candidate", shortSha(job.candidate)), element("span", "", "·"), element("span", "", job.bucket === "archived" ? `Archived ${timestamp(job.archivedAt || job.updatedAt, true)}` : `Updated ${timestamp(job.updatedAt)}`));
@@ -259,7 +277,7 @@
       }
       const all = filteredJobs();
       const hasFilter = state.query.trim() || state.filter !== "all" || state.view === "history";
-      $("finding").textContent = hasFilter ? `${plural(all.length)} in this view · ${plural(snapshot.counts.total)} in the local queue.` : snapshot.counts.attention ? `${plural(snapshot.counts.attention)} need${snapshot.counts.attention === 1 ? "s" : ""} your input.${snapshot.counts.waiting ? ` ${plural(snapshot.counts.waiting)} waiting.` : ""}` : `Nothing needs your input.${snapshot.paused ? " Dispatch is paused." : ` ${plural(snapshot.counts.active)} active.`}`;
+      $("finding").textContent = hasFilter ? `${plural(all.length)} in this view · ${plural(snapshot.counts.total)} in the local queue.` : snapshot.counts.attention ? `${plural(snapshot.counts.attention)} need${snapshot.counts.attention === 1 ? "s" : ""} your input.${snapshot.counts.waiting ? ` ${plural(snapshot.counts.waiting)} waiting.` : ""}` : `Nothing needs your input.${snapshot.paused ? " Dispatch is paused." : snapshot.controllerActive ? ` ${plural(snapshot.counts.active)} active.` : " Dispatch is idle."}`;
       const content = $("workContent");
       content.replaceChildren();
       content.setAttribute("aria-busy", "false");
@@ -359,6 +377,39 @@
     return path;
   }
 
+  function validationSection(evidence, integration = false) {
+    const scope = integration ? "integration" : "branch";
+    const section = element("section", "detail-section");
+    section.append(element("h3", "", integration ? "Integration validation" : "Branch validation"));
+    if (!evidence?.available) {
+      section.append(element("p", "evidence-caption", `No ${scope} validation evidence is available${integration ? " yet" : " for this job"}.`));
+      return section;
+    }
+    section.append(element("p", "evidence-caption", integration ? "Last recorded integration attempt · Historical evidence; this does not certify the current integration branch." : evidence.current ? "Current branch validation for this ready candidate." : "Last branch validation attempt · Historical evidence; this does not certify the current job."));
+    for (const [label, value] of [["Evidence branch", evidence.branch], ["Evidence revision", evidence.revision]]) {
+      const context = element("p", "evidence-caption");
+      context.append(document.createTextNode(`${label} `), element("code", "", value || "Unavailable"));
+      section.append(context);
+    }
+    const checksGroup = element("div", "evidence-group");
+    checksGroup.append(element("h4", "", "Checks"));
+    const checks = element("ul", "evidence-list");
+    evidence.checks.forEach((check) => checks.append(evidenceRow(check.name, `${check.status}${check.exitCode === null ? "" : ` · exit ${check.exitCode}`}`)));
+    if (!evidence.checks.length) checksGroup.append(element("p", "evidence-caption", "No check results in this evidence."));
+    else checksGroup.append(checks);
+    section.append(checksGroup);
+    const reviewsGroup = element("div", "evidence-group");
+    reviewsGroup.append(element("h4", "", "Independent reviews"));
+    const reviews = element("ul", "evidence-list");
+    for (const axis of ["spec", "standards"]) {
+      const review = evidence.reviews.find((item) => item.axis === axis);
+      reviews.append(evidenceRow(axis === "spec" ? "Spec" : "Standards", review ? `${review.status}${review.verdict ? ` · ${review.verdict}` : ""}` : "Not recorded"));
+    }
+    reviewsGroup.append(reviews);
+    section.append(reviewsGroup);
+    return section;
+  }
+
   function renderDetail() {
     const root = $("detailContent");
     const opened = new Set([...root.querySelectorAll("details[open]")].map((node) => node.dataset.disclosure));
@@ -387,6 +438,11 @@
     commandNotice.setAttribute("role", "status");
     commandNotice.hidden = true;
     root.append(commandNotice);
+    const managerNotice = element("div", "notice notice-error");
+    managerNotice.id = "detailManagerNotice";
+    managerNotice.setAttribute("role", "status");
+    managerNotice.hidden = true;
+    root.append(managerNotice);
     if (job.bucket === "attention") {
       const attention = element("section", "detail-attention");
       attention.append(element("h3", "", "Needs your input"), element("p", "", job.attention?.reason || job.blocker || "Read the original blocker for recovery context."));
@@ -400,41 +456,21 @@
     fact(facts, "Branch", job.branch, true);
     fact(facts, "Candidate", job.candidate || "No candidate yet", Boolean(job.candidate));
     fact(facts, "Kind", job.kind === "integration" ? "Integration" : "Implementation");
+    if (job.phase === "recovery") fact(facts, "Recorded stage", statusLabels[job.status]);
     if (job.integrationTarget) fact(facts, "Integrates", job.integrationTarget, true);
     fact(facts, "Updated", timestamp(job.updatedAt, true));
     if (job.archivedAt) fact(facts, "Archived", timestamp(job.archivedAt, true));
     branchSection.append(facts);
     root.append(branchSection);
 
-    const validation = element("section", "detail-section");
-    validation.append(element("h3", "", "Checks & reviews"));
     const evidence = job.evidence;
-    if (!evidence.available) validation.append(element("p", "evidence-caption", "No validation evidence is available for this job."));
-    else {
-      validation.append(element("p", "evidence-caption", evidence.current ? "Current validation for this ready candidate." : "Last validation attempt · Historical evidence; this does not certify the current job."));
-      if (evidence.revision) {
-        const revision = element("p", "evidence-caption");
-        revision.append(document.createTextNode("Evidence revision "), element("code", "", evidence.revision));
-        validation.append(revision);
-      }
-      const checksGroup = element("div", "evidence-group");
-      checksGroup.append(element("h4", "", "Checks"));
-      const checks = element("ul", "evidence-list");
-      evidence.checks.forEach((check) => checks.append(evidenceRow(check.name, `${check.status}${check.exitCode === null ? "" : ` · exit ${check.exitCode}`}`)));
-      if (!evidence.checks.length) checksGroup.append(element("p", "evidence-caption", "No check results in this evidence."));
-      else checksGroup.append(checks);
-      validation.append(checksGroup);
-      const reviewsGroup = element("div", "evidence-group");
-      reviewsGroup.append(element("h4", "", "Independent reviews"));
-      const reviews = element("ul", "evidence-list");
-      for (const axis of ["spec", "standards"]) {
-        const review = evidence.reviews.find((item) => item.axis === axis);
-        reviews.append(evidenceRow(axis === "spec" ? "Spec" : "Standards", review ? `${review.status}${review.verdict ? ` · ${review.verdict}` : ""}` : "Not recorded"));
-      }
-      reviewsGroup.append(reviews);
-      validation.append(reviewsGroup);
+    root.append(validationSection(evidence));
+    const integrationTarget = state.snapshot.jobs.find((item) => item.id === job.integrationTarget);
+    if (job.integrationTarget || job.integrationEvidence) {
+      const integration = validationSection(job.integrationEvidence, true);
+      if (integrationTarget) integration.append(button(`View integration job · ${integrationTarget.id}`, "text-button", () => openJob(integrationTarget.id), `integration:${integrationTarget.id}`));
+      root.append(integration);
     }
-    root.append(validation);
     if (job.dependsOn.length) {
       const dependencies = element("section", "detail-section");
       dependencies.append(element("h3", "", "Prerequisites"));
@@ -453,7 +489,10 @@
     paths.dataset.disclosure = "paths";
     const pathsSummary = element("summary", "", "Workspace & evidence paths");
     pathsSummary.dataset.focusKey = "disclosure:paths";
-    paths.append(pathsSummary, localPath("Repository", job.repo, "copy-repository"), localPath(job.archivedAt ? "Former workspace · archived" : "Workspace", job.worktree, "copy-workspace"), localPath("Validation receipt", evidence.receiptFile, "copy-receipt"));
+    paths.append(pathsSummary, localPath("Repository", job.repo, "copy-repository"), localPath(job.archivedAt ? "Former branch workspace · archived" : "Branch workspace", job.worktree, "copy-workspace"), localPath("Branch validation receipt", evidence.receiptFile, "copy-receipt"));
+    if (job.integrationTarget || job.integrationEvidence) {
+      paths.append(localPath(integrationTarget?.archivedAt ? "Former integration workspace · archived" : "Integration workspace", integrationTarget?.worktree, "copy-integration-workspace"), localPath("Integration validation receipt", job.integrationEvidence?.receiptFile, "copy-integration-receipt"));
+    }
     root.append(paths);
     root.querySelectorAll("details").forEach((node) => { node.open = opened.has(node.dataset.disclosure); });
     $("jobDialog").scrollTop = oldScroll;
@@ -584,7 +623,7 @@
     render();
   });
   $("refresh").addEventListener("click", () => refresh());
-  $("dispatchToggle").addEventListener("click", () => control(state.snapshot?.paused ? "resume" : "pause"));
+  $("dispatchToggle").addEventListener("click", () => control(shouldResumeDispatch() ? "resume" : "pause"));
   $("detailClose").addEventListener("click", () => $("jobDialog").close());
   $("jobDialog").addEventListener("close", () => {
     if (opener?.node.isConnected) opener.node.focus({ preventScroll: true });

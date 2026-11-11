@@ -60,7 +60,7 @@ export class WorkManager {
 		this.wake();
 		return jobs;
 	}
-	status(): { paused: boolean; jobs: Job[] } {
+	status(): { paused: boolean; controllerActive: boolean; jobs: Job[] } {
 		const gate = new QualityGate({ stateDir: join(this.options.stateDir, "evidence"), worker: this.options.worker, modelFor: () => this.options.model });
 		for (const job of this.repository.list()) {
 			if (job.status !== "ready" || ("archivedAt" in job && job.archivedAt)) continue;
@@ -72,7 +72,7 @@ export class WorkManager {
 				this.repository.update(job.id, { status: "interrupted", blocker: `Ready evidence expired: ${error instanceof Error ? error.message : String(error)}` });
 			}
 		}
-		return { paused: this.isPaused(), jobs: this.repository.list() };
+		return { paused: this.isPaused(), controllerActive: Boolean(this.liveController()), jobs: this.repository.list() };
 	}
 	async start(): Promise<Job[]> {
 		if (this.closed) throw new Error("This work manager is closed.");
@@ -248,12 +248,17 @@ export class WorkManager {
 			this.control.query("INSERT OR REPLACE INTO controller VALUES (1,?,?,?)").run(this.owner, process.pid, this.processStamp(process.pid));
 		}).immediate();
 	}
-	private assertControllerAvailable(): void {
+	private liveController(): { owner: string; pid: number; stamp: string } | null {
 		const existing = this.control.query("SELECT owner,pid,stamp FROM controller WHERE singleton=1").get() as { owner: string; pid: number; stamp: string } | null;
-		if (existing && existing.owner !== this.owner && this.processAlive(existing.pid)) {
+		if (existing && this.processAlive(existing.pid)) {
 			const stamp = this.processStamp(existing.pid);
-			if (!stamp || !existing.stamp || stamp === existing.stamp) throw new Error(`Another work manager is already running (PID ${existing.pid}); use its session or wait for it to stop.`);
+			if (!stamp || !existing.stamp || stamp === existing.stamp) return existing;
 		}
+		return null;
+	}
+	private assertControllerAvailable(): void {
+		const existing = this.liveController();
+		if (existing && existing.owner !== this.owner) throw new Error(`Another work manager is already running (PID ${existing.pid}); use its session or wait for it to stop.`);
 	}
 	private current(job: Job): string {
 		const branch = executeGit(job.worktree, ["symbolic-ref", "--short", "HEAD"]);

@@ -8,14 +8,19 @@ import type { Job } from "./types";
 export interface DashboardServer { url: string; close(): Promise<void> }
 interface DashboardOptions { manager: WorkManager; stateDir: string; profile?: string; assetsDir?: string }
 
-export function dashboardBucket(job: Job): DashboardBucket {
+function needsRecovery(job: Job, controllerActive: boolean): boolean {
+  return !controllerActive && ["running", "checking", "reviewing", "integrating"].includes(job.status);
+}
+export function dashboardBucket(job: Job, controllerActive = true): DashboardBucket {
   if (job.archivedAt) return "archived";
+  if (needsRecovery(job, controllerActive)) return "attention";
   if (job.blocker?.startsWith("Blocked by dependency:")) return "waiting";
   if (["blocked", "interrupted"].includes(job.status)) return "attention";
   if (job.status === "ready") return "ready";
   return ["running", "checking", "reviewing", "integrating"].includes(job.status) ? "active" : "waiting";
 }
-function attention(job: Job): NonNullable<DashboardJob["attention"]> {
+function attention(job: Job, recovery: boolean): NonNullable<DashboardJob["attention"]> {
+  if (recovery) return { reason: "Manager stopped before completion", nextAction: "Resume this job to reconcile its retained work through the existing recovery guards." };
   const blocker = job.blocker ?? "Work was interrupted before completion.";
   if (/model.*unavailable|available selected model|selected model.*unavailable/i.test(blocker)) return { reason: "Selected model unavailable", nextAction: "Choose an available role model in OMP, then resume this job." };
   if (/skills|SKILL\.md|source checkout/i.test(blocker)) return { reason: "Work skills need setup", nextAction: "Inspect /work skills status in OMP and complete explicit skills setup, then resume." };
@@ -25,14 +30,14 @@ function attention(job: Job): NonNullable<DashboardJob["attention"]> {
   if (/Ready evidence expired/i.test(blocker)) return { reason: "Ready evidence expired", nextAction: "Inspect the candidate and validation details, then resume to obtain fresh evidence." };
   return { reason: blocker.split("\n")[0]!.replace(/\s+/g, " ").slice(0, 140), nextAction: "Inspect the blocker and local evidence, resolve it, then explicitly resume this job." };
 }
-function evidence(job: Job, stateDir: string): DashboardJob["evidence"] {
+function evidence(job: Job, stateDir: string, integration = false): DashboardJob["evidence"] {
   const unavailable = { available: false, current: false, checks: [], reviews: [] };
   try {
-    const result = JSON.parse(readFileSync(join(stateDir, "results", `${job.id}.json`), "utf8"));
-    if (result?.jobId !== job.id || typeof result.revision !== "string" || !Array.isArray(result.checks) || !Array.isArray(result.reviews)) return unavailable;
+    const result = JSON.parse(readFileSync(join(stateDir, "results", `${job.id}${integration ? "-integration" : ""}.json`), "utf8"));
+    if (result?.jobId !== job.id || typeof result.revision !== "string" || typeof result.branch !== "string" || !Array.isArray(result.checks) || !Array.isArray(result.reviews)) return unavailable;
     if (!result.checks.every((check: any) => typeof check?.name === "string" && typeof check.status === "string" && (check.exitCode === null || Number.isInteger(check.exitCode))) ||
       !result.reviews.every((review: any) => ["spec", "standards"].includes(review?.axis) && typeof review.status === "string")) return unavailable;
-    return { available: true, current: job.status === "ready" && !job.archivedAt && job.candidate === result.revision, revision: result.revision,
+    return { available: true, current: !integration && job.status === "ready" && !job.archivedAt && job.candidate === result.revision && job.branch === result.branch, revision: result.revision, branch: result.branch,
       receiptFile: typeof result.receiptFile === "string" ? result.receiptFile : undefined,
       checks: result.checks.map((check: any) => ({ name: check.name, status: check.status, exitCode: check.exitCode })),
       reviews: result.reviews.map((review: any) => ({ axis: review.axis, status: review.status, verdict: typeof review.report?.verdict === "string" ? review.report.verdict : undefined })) };
@@ -42,15 +47,17 @@ function snapshot(options: DashboardOptions): DashboardSnapshot {
   // status() rechecks ready receipts and demotes expired evidence through the manager.
   const status = options.manager.status();
   const jobs: DashboardJob[] = status.jobs.map((job) => {
-    const group = dashboardBucket(job);
+    const group = dashboardBucket(job, status.controllerActive);
+    const recovery = needsRecovery(job, status.controllerActive);
     return { id: job.id, title: job.task.split("\n")[0]!.replace(/\s+/g, " ").slice(0, 120), task: job.task, repo: job.repo, repoName: basename(job.repo),
-      branch: job.branch, candidate: job.candidate, worktree: job.worktree, status: job.status, bucket: group, phase: job.status,
+      branch: job.branch, candidate: job.candidate, worktree: job.worktree, status: job.status, bucket: group, phase: recovery ? "recovery" : job.status,
       attempt: job.attempt, kind: job.kind, dependsOn: job.dependsOn, integrationTarget: job.integrationTarget, updatedAt: job.updatedAt, archivedAt: job.archivedAt,
-      blocker: job.blocker, attention: group === "attention" ? attention(job) : undefined, canResume: group === "attention", evidence: evidence(job, options.stateDir) };
+      blocker: job.blocker, attention: group === "attention" ? attention(job, recovery) : undefined, canResume: group === "attention", evidence: evidence(job, options.stateDir),
+      integrationEvidence: job.integrationTarget ? evidence(job, options.stateDir, true) : undefined };
   });
   const counts: DashboardSnapshot["counts"] = { attention: 0, active: 0, waiting: 0, ready: 0, archived: 0, total: jobs.length };
   for (const job of jobs) counts[job.bucket]++;
-  return { version: 1, generatedAt: new Date().toISOString(), profile: options.profile ?? "default", paused: status.paused, counts, jobs };
+  return { version: 1, generatedAt: new Date().toISOString(), profile: options.profile ?? "default", paused: status.paused, controllerActive: status.controllerActive, counts, jobs };
 }
 
 /** Opt-in browser access to the existing session's manager, never a controller. */
@@ -96,8 +103,9 @@ export function startDashboard(options: DashboardOptions): DashboardServer {
           (Object.hasOwn(body, "id") && (body.action !== "resume" || typeof body.id !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(body.id)))) return json({ error: "Use pause or resume with an optional resume job ID only." }, 400);
         try {
           if (body.id) {
-            const job = options.manager.status().jobs.find((job) => job.id === body.id);
-            if (!job || dashboardBucket(job) !== "attention") return json({ error: "Only a blocked or interrupted job needing attention can be resumed individually." }, 409);
+            const status = options.manager.status();
+            const job = status.jobs.find((job) => job.id === body.id);
+            if (!job || dashboardBucket(job, status.controllerActive) !== "attention") return json({ error: "Only a job needing attention can be resumed individually." }, 409);
           }
           actionError = undefined;
           if (body.action === "pause") options.manager.pause();

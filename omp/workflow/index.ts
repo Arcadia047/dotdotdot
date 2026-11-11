@@ -41,7 +41,7 @@ function errorText(error: unknown): string { return error instanceof Error ? err
 function response(details: unknown) { return { content: [{ type: "text", text: JSON.stringify(details, null, 2) }], details }; }
 function statusSummary(status: ReturnType<WorkManager["status"]>): string {
   const counts = { attention: 0, active: 0, waiting: 0, ready: 0, archived: 0 };
-  for (const job of status.jobs) counts[dashboardBucket(job)]++;
+  for (const job of status.jobs) counts[dashboardBucket(job, status.controllerActive)]++;
   return `Work ${status.paused ? "paused" : "dispatch enabled"}: ${counts.attention} need attention, ${counts.active} active, ${counts.waiting} waiting, ${counts.ready} ready, ${counts.archived} archived. Details: /work dashboard.`;
 }
 

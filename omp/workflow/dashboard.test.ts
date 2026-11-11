@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { startDashboard, type DashboardServer } from "./dashboard";
 import { WorkManager, type WorkerClient } from "./manager";
 import { executeGit } from "./jobs";
@@ -73,6 +74,38 @@ test("the browser separates dependency waiting from attention and labels retaine
   writeFileSync(join(ready.worktree, "value"), "later change\n");
   const changed = await (await fetch(new URL("/api/status", url), { headers })).json();
   expect(changed.jobs.find((job: { id: string }) => job.id === "ready")).toMatchObject({ status: "interrupted", bucket: "attention", evidence: { available: true, current: false } });
+});
+
+test("the browser retains passing branch validation alongside a failed integration attempt", async () => {
+  const { root, manager, url, headers } = fixture({ async run(request) {
+    if (request.role === "implementer") {
+      writeFileSync(join(request.cwd, "child.txt"), "child\n");
+      executeGit(request.cwd, ["add", "."]); executeGit(request.cwd, ["commit", "-m", "Child"]);
+    }
+    return { text: "Controlled result", model: request.model, report: { revision: executeGit(request.cwd, ["rev-parse", "HEAD"]), verdict: "pass", findings: [] } };
+  } });
+  const repo = repository(root);
+  manager.submit([
+    { id: "feature", kind: "integration", repo, branch: "feature/all", task: "Deliver the combined child", acceptance: ["Child exists"], checks: [{ name: "Combined behavior", command: "test -f child.txt" }], dependsOn: ["child"] },
+    { id: "child", repo, branch: "feature/child", task: "Implement the child", acceptance: ["Child works standalone and integrated"], checks: [{ name: "Context behavior", command: 'test -f child.txt && test "$(basename "$PWD")" != feature' }], integrationTarget: "feature" },
+  ]);
+  const pending = await (await fetch(new URL("/api/status", url), { headers })).json();
+  await manager.start();
+  const snapshot = await (await fetch(new URL("/api/status", url), { headers })).json();
+  const child = snapshot.jobs.find((job: { id: string }) => job.id === "child");
+  expect(child).toMatchObject({ status: "blocked", bucket: "attention", evidence: {
+    available: true, current: false, branch: "feature/child", revision: child.candidate,
+    checks: [{ name: "Context behavior", status: "passed", exitCode: 0 }],
+    reviews: [{ axis: "spec", status: "passed", verdict: "pass" }, { axis: "standards", status: "passed", verdict: "pass" }],
+  }, integrationEvidence: {
+    available: true, current: false, branch: "feature/all",
+    checks: [{ name: "Context behavior", status: "failed", exitCode: 1 }],
+    reviews: [{ axis: "spec", status: "passed", verdict: "pass" }, { axis: "standards", status: "passed", verdict: "pass" }],
+  } });
+  expect(child.integrationEvidence.revision).toBe(executeGit(repo, ["rev-parse", "feature/all"]));
+  expect(child.integrationEvidence.revision).not.toBe(child.candidate);
+  expect(child.integrationEvidence.receiptFile).not.toBe(child.evidence.receiptFile);
+  expect(pending.jobs.find((job: { id: string }) => job.id === "child").integrationEvidence).toEqual({ available: false, current: false, checks: [], reviews: [] });
 });
 
 test("only explicit local assets and same-origin authenticated API requests are accepted", async () => {
@@ -149,3 +182,45 @@ test("a rejected asynchronous resume is surfaced without fabricating a job outco
   expect(snapshot.actionError).toBe("maxWorkers must be a positive integer.");
   expect(snapshot.jobs).toEqual([]);
 });
+
+test("after a host crash the browser exposes guarded recovery while a live controller remains active", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "omp-dashboard-crash-test-"))); roots.push(root);
+  const repo = repository(root), stateDir = join(root, "state"), marker = join(root, "committed.marker");
+  writeFileSync(join(repo, "value.txt"), "original\n"); executeGit(repo, ["add", "."]); executeGit(repo, ["commit", "-m", "Crash fixture input"]);
+  const child = Bun.spawn([process.execPath, fileURLToPath(new URL("./fixtures/crash-manager.ts", import.meta.url)), repo, stateDir, marker], { stdout: "pipe", stderr: "pipe" });
+  let implementations = 0;
+  const worker: WorkerClient = { async run(request) {
+    if (request.role === "implementer") implementations++;
+    return { text: "Review retained commit", model: request.model, report: { revision: executeGit(request.cwd, ["rev-parse", "HEAD"]), verdict: "pass", findings: [] } };
+  } };
+  const open = () => {
+    const manager = new WorkManager({ stateDir, worker, model: { provider: "fixture", id: "local" } }); managers.push(manager);
+    const dashboard = startDashboard({ manager, stateDir }); dashboards.push(dashboard);
+    const url = new URL(dashboard.url), headers = { Authorization: `Bearer ${new URLSearchParams(url.hash.slice(1)).get("token")}` };
+    const status = async () => (await fetch(new URL("/api/status", url), { headers })).json();
+    const resume = () => fetch(new URL("/api/control", url), { method: "POST", headers: { ...headers, Origin: url.origin, "Content-Type": "application/json" }, body: '{"action":"resume","id":"crash"}' });
+    return { manager, dashboard, status, resume };
+  };
+  try {
+    const deadline = Date.now() + 10_000;
+    while (!existsSync(marker) && Date.now() < deadline && child.exitCode === null) await Bun.sleep(10);
+    expect(existsSync(marker)).toBe(true);
+    const live = open();
+    expect(await live.status()).toMatchObject({ controllerActive: true, counts: { active: 1, attention: 0 }, jobs: [{ id: "crash", status: "running", bucket: "active", canResume: false }] });
+    expect((await live.resume()).status).toBe(409);
+    await live.dashboard.close(); await live.manager.close();
+    child.kill("SIGKILL"); await child.exited;
+    expect(child.signalCode).toBe("SIGKILL");
+    expect(() => process.kill(child.pid, 0)).toThrow();
+    const recovered = open();
+    const snapshot = await recovered.status();
+    expect(snapshot).toMatchObject({ controllerActive: false, counts: { active: 0, attention: 1 }, jobs: [{ id: "crash", status: "running", bucket: "attention", phase: "recovery", canResume: true, attention: { reason: "Manager stopped before completion" } }] });
+    expect((await recovered.status()).jobs[0].bucket).toBe("attention");
+    expect(recovered.manager.status().jobs[0]!.status).toBe("running");
+    const response = await recovered.resume();
+    expect(response.status).toBe(202); expect(await response.json()).toEqual({ accepted: true });
+    for (let i = 0; i < 200 && recovered.manager.status().jobs[0]!.status !== "ready"; i++) await Bun.sleep(10);
+    expect(await recovered.status()).toMatchObject({ controllerActive: false, counts: { active: 0, attention: 0, ready: 1 }, jobs: [{ id: "crash", status: "ready", canResume: false }] });
+    expect(implementations).toBe(0);
+  } finally { if (child.exitCode === null) { child.kill("SIGKILL"); await child.exited; } }
+}, 30_000);
