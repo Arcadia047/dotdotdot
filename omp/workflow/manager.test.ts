@@ -25,6 +25,117 @@ afterEach(async () => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
+test("cleanup preserves ignored local data inside a ready worktree", async () => {
+	const { repo, stateDir } = fixture();
+	writeFileSync(join(repo, ".gitignore"), "private-data/\n");
+	executeGit(repo, ["add", ".gitignore"]);
+	executeGit(repo, ["commit", "-m", "Ignore local data"]);
+	const worker = { async run(request: import("./manager").WorkerRequest) {
+		if (request.role === "implementer") {
+			writeFileSync(join(request.cwd, "value.txt"), "ready\n");
+			executeGit(request.cwd, ["commit", "-am", "Candidate"]);
+		}
+		return { text: "Candidate", model: request.model, report: { revision: executeGit(request.cwd, ["rev-parse", "HEAD"]), verdict: "pass", findings: [] } };
+	} };
+	const manager = new WorkManager({ stateDir, worker, model: { provider: "fixture", id: "local" } });
+	managers.push(manager);
+	manager.submit([{ id: "one", repo, branch: "feature/one", task: "Set ready value", acceptance: ["Value is ready"], checks: [{ name: "value", command: "test -f value.txt" }] }]);
+	await manager.start();
+	const job = manager.status().jobs[0]!;
+	expect(job.status).toBe("ready");
+	const data = join(job.worktree, "private-data");
+	const { mkdirSync } = await import("node:fs");
+	mkdirSync(data);
+	writeFileSync(join(data, "local.db"), "unaccounted local data");
+	expect(() => manager.cleanup(job.id)).toThrow(/ignored|unaccounted/i);
+	expect(readFileSync(join(data, "local.db"), "utf8")).toBe("unaccounted local data");
+	expect(manager.status().jobs[0]!.archivedAt).toBeUndefined();
+});
+
+test("a timed-out queued review never dispatches after its worker slot becomes free", async () => {
+	const { repo, stateDir } = fixture();
+	const dispatched: string[] = [];
+	let runningReviews = 0;
+	const worker = { async run(request: import("./manager").WorkerRequest) {
+		dispatched.push(request.role!);
+		if (request.role === "implementer") {
+			writeFileSync(join(request.cwd, "value.txt"), "candidate\n");
+			executeGit(request.cwd, ["commit", "-am", "Candidate"]);
+		} else {
+			runningReviews++;
+			try {
+				await new Promise<never>((_resolve, reject) => {
+					const stop = () => { setTimeout(() => reject(new Error("Review stopped and drained")), 80); };
+					if (request.signal?.aborted) stop();
+					else request.signal?.addEventListener("abort", stop, { once: true });
+				});
+			} finally { runningReviews--; }
+		}
+		return { text: "Candidate", model: request.model };
+	} };
+	const manager = new WorkManager({ stateDir, worker, model: { provider: "fixture", id: "local" }, maxWorkers: 1, validationTimeoutMs: 80 });
+	managers.push(manager);
+	manager.submit([{ id: "one", repo, branch: "feature/one", task: "Set candidate", acceptance: ["Value changed"], checks: [{ name: "value", command: "test -f value.txt" }] }]);
+	const running = manager.start();
+	await Promise.race([running, Bun.sleep(1200)]);
+	expect(manager.status().jobs[0]!.status).toBe("blocked");
+	await Bun.sleep(250);
+	expect(dispatched).toEqual(["implementer", "spec-reviewer"]);
+	expect(runningReviews).toBe(0);
+	await running;
+});
+
+test("each role resolves the live choice after implementation and after waiting for a worker slot", async () => {
+	const { repo, stateDir } = fixture();
+	let live = "initial";
+	const selections: [string, string][] = [];
+	const worker = { async run(request: import("./manager").WorkerRequest) {
+		selections.push([request.role!, request.model.id]);
+		if (request.role === "implementer") {
+			writeFileSync(join(request.cwd, "value.txt"), "candidate\n");
+			executeGit(request.cwd, ["commit", "-am", "Candidate"]);
+			live = "after-implementation";
+		} else if (request.role === "spec-reviewer") live = "after-first-review";
+		return { text: "Candidate", model: request.model, report: { revision: executeGit(request.cwd, ["rev-parse", "HEAD"]), verdict: "pass", findings: [] } };
+	} };
+	const manager = new WorkManager({ stateDir, worker, model: { provider: "fixture", id: "initial" }, modelFor: () => ({ provider: "fixture", id: live }), maxWorkers: 1 });
+	managers.push(manager);
+	manager.submit([{ id: "one", repo, branch: "feature/one", task: "Set candidate", acceptance: ["Value changed"], checks: [{ name: "value", command: "test -f value.txt" }] }]);
+	await manager.start();
+	expect(selections).toEqual([["implementer", "initial"], ["spec-reviewer", "after-implementation"], ["technical-reviewer", "after-first-review"]]);
+	expect(manager.status().jobs[0]!.status).toBe("ready");
+});
+
+test("crash recovery retains a running validation group and retries only after it drains", async () => {
+	const { root, repo, stateDir } = fixture();
+	const marker = join(root, "check-starts");
+	const child = Bun.spawn([process.execPath, fileURLToPath(new URL("./fixtures/crash-check-manager.ts", import.meta.url)), repo, stateDir, marker], { stdout: "pipe", stderr: "pipe" });
+	try {
+		const deadline = Date.now() + 10_000;
+		while (!existsSync(marker) && Date.now() < deadline && child.exitCode === null) await Bun.sleep(10);
+		expect(existsSync(marker)).toBe(true);
+		child.kill("SIGKILL");
+		await child.exited;
+		let implementations = 0;
+		const worker = { async run(request: import("./manager").WorkerRequest) {
+			if (request.role === "implementer") implementations++;
+			return { text: "Existing candidate reviewed", model: request.model, report: { revision: executeGit(request.cwd, ["rev-parse", "HEAD"]), verdict: "pass", findings: [] } };
+		} };
+		const recovered = new WorkManager({ stateDir, worker, model: { provider: "fixture", id: "local" } });
+		managers.push(recovered);
+		await recovered.resume();
+		expect(recovered.status().jobs[0]).toMatchObject({ status: "blocked", blocker: expect.stringMatching(/validation|process|worker/i) });
+		expect(readFileSync(marker, "utf8").trim().split("\n")).toHaveLength(1);
+		await Bun.sleep(2300);
+		await recovered.resume();
+		expect(recovered.status().jobs[0]!.status).toBe("ready");
+		expect(implementations).toBe(0);
+		expect(readFileSync(marker, "utf8").trim().split("\n")).toHaveLength(2);
+	} finally {
+		if (child.exitCode === null) { child.kill("SIGKILL"); await child.exited; }
+	}
+}, 20_000);
+
 test("a deliberate pause prevents new worker dispatch and survives reopening", async () => {
 	const { repo, stateDir } = fixture();
 	writeFileSync(join(repo, "value.txt"), "unfinished original\n");

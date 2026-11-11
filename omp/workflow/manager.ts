@@ -11,6 +11,7 @@ export interface WorkerRequest {
 	cwd: string; model: ModelSelection; prompt: string; sessionDir: string;
 	role?: string; reportSchema?: Record<string, unknown>; signal?: AbortSignal;
 	timeoutMs?: number; onSpawn?: (worker: { pid: number; sessionDir: string }) => void;
+	selectModel?: () => ModelSelection | Promise<ModelSelection>;
 }
 export interface WorkerClient {
 	run(request: WorkerRequest): Promise<{ text: string; report?: unknown; sessionFile?: string; model: ModelSelection }>;
@@ -21,6 +22,8 @@ export interface ManagerOptions {
 	model: ModelSelection;
 	maxWorkers?: number;
 	repairLimit?: number;
+	validationTimeoutMs?: number;
+	workerTimeoutMs?: number;
 	modelFor?: (role: string) => ModelSelection | Promise<ModelSelection>;
 	instructions?: (role: string, job: Job) => string | Promise<string>;
 	onEvent?: (event: { job: Job; message: string }) => void;
@@ -88,8 +91,7 @@ export class WorkManager {
 		for (const job of all.filter((job) => !id || job.id === id || job.blocker?.startsWith("Blocked by dependency:"))) {
 			if (job.status === "ready" || ("archivedAt" in job && job.archivedAt) || (this.execution && job.owner === this.owner)) continue;
 			try {
-				const live = this.liveWorker(job);
-				if (live) throw new Error(`Owned worker PID ${live} still exists; wait for it to stop before resuming ${job.id}.`);
+				this.reconcileProcesses(job);
 				const revision = this.current(job);
 				const runBase = this.metadata(job).runBase ?? job.base;
 				const candidate = job.candidate || (job.attempt > 0 && revision !== runBase) || job.kind === "integration" ? revision : undefined;
@@ -111,25 +113,32 @@ export class WorkManager {
 		if (!job) throw new Error(`Unknown job ${id}.`);
 		if (job.archivedAt) return job;
 		if (job.status !== "ready" || job.owner) throw new Error(`Job ${id} is not a reconciled ready result; unfinished work was retained.`);
-		if (this.liveWorker(job)) throw new Error(`Job ${id} still has a live worker; its worktree was retained.`);
+		this.reconcileProcesses(job);
 		const expected = join(realpathSync(this.options.stateDir), "worktrees", id);
 		if (job.worktree !== expected || realpathSync(job.worktree) !== expected) throw new Error("Cleanup refused a replaced or unowned worktree path.");
 		if (this.current(job) !== job.candidate) throw new Error("Cleanup refused changed candidate work.");
+		if (executeGit(job.worktree, ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"])) throw new Error(`Cleanup retained ignored, unaccounted local files in ${job.worktree}; inspect and remove them explicitly before retrying.`);
 		executeGit(job.repo, ["worktree", "remove", job.worktree]);
 		return this.repository.archive(id);
 	}
-	private liveWorker(job: Job): number | undefined {
+	private reconcileProcesses(job: Job): void {
 		for (const id of [job.id, job.integrationTarget].filter((id): id is string => !!id)) {
-			const directory = join(this.options.stateDir, "processes", id);
-			if (!existsSync(directory)) continue;
-			for (const file of readdirSync(directory)) {
-				const record = JSON.parse(readFileSync(join(directory, file), "utf8"));
-				if (record.ended || !Number.isSafeInteger(record.pid) || !this.processAlive(record.pid)) continue;
-				const stamp = this.processStamp(record.pid);
-				if (!stamp || !record.stamp || stamp === record.stamp) return record.pid;
+			for (const directory of [join(this.options.stateDir, "processes", id), join(this.options.stateDir, "evidence", "processes", id)]) {
+				if (!existsSync(directory)) continue;
+				for (const file of readdirSync(directory).filter((file) => file.endsWith(".json"))) {
+					const path = join(directory, file);
+					const record = JSON.parse(readFileSync(path, "utf8"));
+					if (record.ended === true) continue;
+					if (!Number.isSafeInteger(record.pid) || record.pid <= 0) throw new Error(`Owned process intent ${path} has unknown identity; retain its work and reconcile it explicitly.`);
+					const group = record.pgid ?? record.pid;
+					if (!Number.isSafeInteger(group) || group <= 0) throw new Error(`Owned process record ${path} has an invalid group identity; retain its work for reconciliation.`);
+					const stamp = this.processStamp(record.pid);
+					const leaderAlive = this.processAlive(record.pid) && (!stamp || !record.stamp || stamp === record.stamp);
+					if (leaderAlive || this.processAlive(-group)) throw new Error(`Owned ${record.kind === "check" ? "validation" : "worker"} process group ${group} still exists; wait for it to stop before reusing ${job.id}.`);
+					this.writeRecord(path, { ...record, status: "ended", ended: true, endedAt: new Date().toISOString(), interrupted: true });
+				}
 			}
 		}
-		return undefined;
 	}
 	private wake(): void {
 		for (const wake of this.wakeups) wake();
@@ -145,13 +154,20 @@ export class WorkManager {
 	}
 	private async worker(request: WorkerRequest, jobId?: string): Promise<Awaited<ReturnType<WorkerClient["run"]>>> {
 		const limit = this.options.maxWorkers ?? 2;
-		while (!this.abort.signal.aborted && (this.isPaused() || this.modelWorkers >= limit)) await this.wait();
-		this.abort.signal.throwIfAborted();
+		const signal = request.signal ? AbortSignal.any([this.abort.signal, request.signal]) : this.abort.signal;
+		const wake = () => this.wake();
+		signal.addEventListener("abort", wake, { once: true });
+		try {
+			while (!signal.aborted && (this.isPaused() || this.modelWorkers >= limit)) await this.wait();
+			signal.throwIfAborted();
+		} finally { signal.removeEventListener("abort", wake); }
 		this.modelWorkers++;
 		let processRecord: Record<string, unknown> | undefined;
 		const processPath = jobId ? join(this.options.stateDir, "processes", jobId, `${randomUUID()}.json`) : undefined;
 		try {
-			return await this.options.worker.run({ ...request, signal: this.abort.signal, onSpawn: (worker) => {
+			const model = await (request.selectModel?.() ?? request.model);
+			signal.throwIfAborted();
+			return await this.options.worker.run({ ...request, model, signal, onSpawn: (worker) => {
 				mkdirSync(request.sessionDir, { recursive: true });
 				processRecord = { ...worker, cwd: request.cwd, role: request.role, owner: this.owner, stamp: this.processStamp(worker.pid), startedAt: new Date().toISOString(), ended: false };
 				if (processPath) this.writeRecord(processPath, processRecord);
@@ -261,12 +277,11 @@ export class WorkManager {
 		this.writeRecord(join(this.options.stateDir, "job-meta", `${job.id}.json`), { runBase: this.current(job) });
 	}
 	private async gate(job: Job): Promise<QualityGate> {
-		const models = { "spec-reviewer": await this.model("spec-reviewer"), "technical-reviewer": await this.model("technical-reviewer") };
-		return new QualityGate({ stateDir: join(this.options.stateDir, "evidence"), worker: { run: (request: WorkerRequest) => this.worker(request, job.id) }, modelFor: (role) => models[role], signal: this.abort.signal, instructions: this.options.instructions });
+		return new QualityGate({ stateDir: join(this.options.stateDir, "evidence"), worker: { run: (request: WorkerRequest) => this.worker(request, job.id) }, modelFor: (role) => this.model(role), signal: this.abort.signal, instructions: this.options.instructions, timeoutMs: this.options.validationTimeoutMs });
 	}
 	private async repair(job: Job, feedback: string, role = "implementer"): Promise<void> {
 		const instructions = await this.options.instructions?.(role, job) ?? "";
-		await this.worker({ cwd: job.worktree, model: await this.model(role), role, sessionDir: join(this.options.stateDir, "sessions", job.id, `${role}-${job.attempt}-${randomUUID()}`), prompt: `${instructions}\nYou are the ${role} for job ${job.id}. Work only in ${job.worktree} on ${job.branch}.\n${job.task}\nAcceptance criteria:\n${job.acceptance.map((x) => `- ${x}`).join("\n")}\nRun relevant checks and commit your scoped changes. Preserve all unrelated work. Do not publish, claim ready, spawn other agents, or run review/integration outside this assignment; the manager handles those.\n${feedback ? `Address these observed failures without changing acceptance criteria or disabling checks:\n${feedback}` : ""}` }, job.id);
+		await this.worker({ cwd: job.worktree, model: await this.model(role), selectModel: () => this.model(role), timeoutMs: this.options.workerTimeoutMs, role, sessionDir: join(this.options.stateDir, "sessions", job.id, `${role}-${job.attempt}-${randomUUID()}`), prompt: `${instructions}\nYou are the ${role} for job ${job.id}. Work only in ${job.worktree} on ${job.branch}.\n${job.task}\nAcceptance criteria:\n${job.acceptance.map((x) => `- ${x}`).join("\n")}\nRun relevant checks and commit your scoped changes. Preserve all unrelated work. Do not publish, claim ready, spawn other agents, or run review/integration outside this assignment; the manager handles those.\n${feedback ? `Address these observed failures without changing acceptance criteria or disabling checks:\n${feedback}` : ""}` }, job.id);
 	}
 	private async integrate(job: Job): Promise<void> {
 		const targetId = job.integrationTarget!;
