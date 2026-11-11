@@ -10,7 +10,16 @@ The original checkout's unrelated modifications were preserved. Nothing was push
 
 ## Acceptance evidence
 
-Final regression checks and independent review are pending; this record will be completed before delivery.
+Runtime acceptance completed at `d2b7b2869fac8c22af5c0806481d8803297f8305`, before the subsequently requested browser dashboard (tickets 09–10):
+
+- `bun test workflow && bun run typecheck`: 112 tests passed, zero failed, 642 assertions; strict TypeScript check passed.
+- `./scripts/check`: all repository checks passed, including 29 Python tests and the existing shell/Lua/editor checks.
+- Real OMP parallel manager acceptance passed: two independent same-repository branches, native writes/commits, two actual check runs, four fresh reviewer sessions, original dirty checkout preserved. Evidence: `/tmp/omp-manager-smoke-_g3kk8bx`.
+- Real native-command cancellation passed; the late mutation was prevented and sessions/transcripts/stderr retained. Evidence: `/tmp/omp-manager-smoke-dex3l60b`.
+- Native OMP extension/symlink discovery and `/work skills status` captured current planning guidance without a model request; no jobs database was opened. Evidence: `/var/folders/2x/3rpwl8bj5dj7xrwllrzph4lh0000gn/T/omp-entry-load-oi43cgqo`.
+- Independent [Standards](reviews/runtime-standards.md): no outstanding findings. Independent [Spec](reviews/runtime-spec.md): no remaining actionable findings. Review-driven defects were repaired and independently rechecked.
+
+The browser dashboard is an approved scope addition recorded in [dashboard-spec.md](dashboard-spec.md), with its own pending verification; runtime acceptance above does not claim that the new UI is finished.
 
 The approved public seams are the work manager and the supported OMP process adapter. Disposable real Git repositories exercise independent branches, forward dependencies, exclusive branch claims, combined-result failures, bounded repair, dirty originals, stale evidence, process interruption, and cleanup. Controlled worker responses plant failures and malformed reports; actual validation commands run as owned processes.
 
@@ -20,8 +29,9 @@ The current public Matt Pocock skills tree was also captured successfully with 3
 
 ## Review-driven regressions
 
-- Cleanup retains ignored local data instead of letting Git remove it with the worktree.
+- Cleanup retains ignored local data instead of letting Git remove it with the worktree. Explicit resume also retains unaccounted ignored data before any editing dispatch, while uninterrupted repair still works through generated ignored build caches.
 - A detached validation process is journaled before its command can execute. After a host crash, resume blocks while its group survives, reconciles a confirmed drained group, and verifies the existing committed candidate without duplicate implementation.
+- Shared integration recovery finds surviving check and model groups across sibling ticket IDs by actual workspace. Ordinary supervised integration instead makes later siblings wait; more tickets than worker slots complete without manual resume.
 - An expired review waiting for a shared worker slot never dispatches after that slot becomes free.
 - Each role resolves the live model choice after acquiring its slot; review evidence records the actual selected identity.
 - The main session receives an immutable skill inventory, exact resource paths, and OMP invocation guidance through the skills interface.
