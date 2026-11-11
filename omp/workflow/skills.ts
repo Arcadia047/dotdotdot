@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 
 export interface SkillsSourceOptions {
   /** Host-owned local state, outside candidate worktrees. */
@@ -29,7 +29,7 @@ interface SnapshotRecord {
   runId: string;
   revision: string;
   skills: Omit<SkillEntry, "path">[];
-  files: { path: string; sha256: string }[];
+  files: { path: string; sha256: string; resolvedFrom?: string }[];
 }
 
 export class SkillsSnapshot {
@@ -78,6 +78,20 @@ function regular(path: string): void {
   if (!info.isFile() || info.isSymbolicLink()) throw new Error(`Skills snapshot integrity: file ${path} is missing or redirected.`);
 }
 function digest(body: Buffer): string { return createHash("sha256").update(body).digest("hex"); }
+function skillMetadata(header: string, path: string): Record<string, unknown> {
+  try { return Bun.YAML.parse(header) as Record<string, unknown>; }
+  catch {
+    // Some upstream descriptions are plain text with an unquoted colon. Quote
+    // that scalar for inventory parsing only; the captured skill bytes stay exact.
+    const description = /^description:[ \t]*([^\r\n]+)$/m.exec(header)?.[1]?.trim();
+    if (description?.includes(": ") && !["'", '"', "|", ">", "{", "[", "&", "*", "!", "#"].includes(description[0]!)) {
+      try {
+        return Bun.YAML.parse(header.replace(/^description:[ \t]*[^\r\n]*$/m, `description: ${JSON.stringify(description)}`)) as Record<string, unknown>;
+      } catch { /* Report the upstream path below rather than a bare YAML error. */ }
+    }
+    throw new Error(`Skill ${path} has unreadable name/description frontmatter; inspect the upstream file.`);
+  }
+}
 
 /** Explicit, inbound-only upstream maintenance, separate from run instructions. */
 export class SkillsSource {
@@ -143,7 +157,7 @@ export class SkillsSource {
     return this.status();
   }
 
-  /** Captures committed blobs, never working files, without altering upstream bodies. */
+  /** Captures committed blobs, materializing safe file links without reading working files. */
   snapshot(runId: string): SkillsSnapshot {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(runId)) throw new Error("Invalid skills run ID.");
     const destination = join(this.stateDir, "skill-snapshots", runId);
@@ -182,11 +196,29 @@ export class SkillsSource {
       const [mode, type, object] = entry.slice(0, tab).split(" ");
       const path = entry.slice(tab + 1);
       safePath(path);
-      if (type !== "blob" || (mode !== "100644" && mode !== "100755")) {
-        throw new Error(`Unsupported skills symlink or submodule at ${JSON.stringify(path)}; snapshots require regular committed files.`);
+      if (type !== "blob" || (mode !== "100644" && mode !== "100755" && mode !== "120000")) {
+        throw new Error(`Unsupported skills submodule or tree entry at ${JSON.stringify(path)}; snapshots require committed files.`);
       }
       return { path, mode, object: object! };
     });
+    const entries = new Map(tree.map((entry) => [entry.path, entry]));
+    const resolveFile = (path: string): typeof tree[number] => {
+      const seen = new Set<string>();
+      while (true) {
+        if (seen.has(path)) throw new Error(`Cyclic skills symlink at ${JSON.stringify(path)}; a regular committed file is required.`);
+        seen.add(path);
+        const entry = entries.get(path);
+        if (!entry) throw new Error(`Dangling or directory skills symlink target ${JSON.stringify(path)}; a regular committed file is required.`);
+        if (entry.mode !== "120000") return entry;
+        const blob = git(this.sourceDir, ["cat-file", "blob", entry.object]);
+        const target = blob.toString("utf8");
+        if (!target || target.includes("\0") || target.includes("\\") || posix.isAbsolute(target) || /^[a-z]:/i.test(target) || !Buffer.from(target, "utf8").equals(blob)) {
+          throw new Error(`Unsafe skills symlink target at ${JSON.stringify(path)}; only relative Git-tree file links are supported.`);
+        }
+        path = posix.normalize(posix.join(posix.dirname(path), target));
+        safePath(path);
+      }
+    };
     mkdirSync(this.stateDir, { recursive: true, mode: 0o700 });
     directory(this.stateDir);
     const snapshots = join(this.stateDir, "skill-snapshots");
@@ -198,14 +230,15 @@ export class SkillsSource {
     const files: SnapshotRecord["files"] = [];
     try {
       for (const entry of tree) {
-        const body = git(this.sourceDir, ["cat-file", "blob", entry.object]);
+        const resolved = resolveFile(entry.path);
+        const body = git(this.sourceDir, ["cat-file", "blob", resolved.object]);
         const path = join(temporary, "tree", entry.path);
         mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-        writeFileSync(path, body, { flag: "wx", mode: entry.mode === "100755" ? 0o500 : 0o400 });
-        files.push({ path: entry.path, sha256: digest(body) });
+        writeFileSync(path, body, { flag: "wx", mode: resolved.mode === "100755" ? 0o500 : 0o400 });
+        files.push({ path: entry.path, sha256: digest(body), ...(resolved.path === entry.path ? {} : { resolvedFrom: resolved.path }) });
         if (entry.path.split("/").at(-1) === "SKILL.md") {
           const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(body.toString("utf8"));
-          const metadata = frontmatter ? Bun.YAML.parse(frontmatter[1]!) as Record<string, unknown> : undefined;
+          const metadata = frontmatter ? skillMetadata(frontmatter[1]!, entry.path) : undefined;
           if (!metadata || typeof metadata.name !== "string" || !metadata.name.trim() || typeof metadata.description !== "string" || !metadata.description.trim()) {
             throw new Error(`Skill ${entry.path} requires name and description frontmatter.`);
           }

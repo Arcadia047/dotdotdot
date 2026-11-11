@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RoleChoices, SkillsSource } from "./skills";
@@ -126,17 +126,62 @@ test("sync refuses dirty, ignored, detached, wrong-branch, and diverged sources 
   expect(existsSync(join(upstream, "local-work"))).toBe(false);
 });
 
-test("snapshots refuse external and cyclic symlinks instead of following them", () => {
+test("snapshots materialize committed internal file links and chains without changing source links", () => {
+  const { source, upstream } = fixture();
+  const body = "Original committed agent instructions.\n";
+  writeFileSync(join(upstream, "CLAUDE.md"), body);
+  symlinkSync("CLAUDE.md", join(upstream, "AGENTS.md"));
+  mkdirSync(join(upstream, "docs"));
+  symlinkSync("../AGENTS.md", join(upstream, "docs/agent-link.md"));
+  symlinkSync("docs/agent-link.md", join(upstream, "agent-chain.md"));
+  git(upstream, "add", ".");
+  git(upstream, "commit", "-m", "Committed internal links like current upstream");
+  source.sync();
+  const snapshot = source.snapshot("internal-links");
+  for (const path of ["CLAUDE.md", "AGENTS.md", "docs/agent-link.md", "agent-chain.md"]) {
+    expect(lstatSync(join(snapshot.root, path)).isFile()).toBe(true);
+    expect(lstatSync(join(snapshot.root, path)).isSymbolicLink()).toBe(false);
+    expect(lstatSync(join(snapshot.root, path)).mode & 0o222).toBe(0);
+    expect(readFileSync(join(snapshot.root, path), "utf8")).toBe(body);
+  }
+  expect(readlinkSync(join(source.sourceDir, "AGENTS.md"))).toBe("CLAUDE.md");
+  expect(source.snapshot("internal-links")).toEqual(snapshot);
+  expect(source.status().dirty).toBe(false);
+});
+
+test("snapshots refuse external symlinks instead of following them", () => {
   const { root, source, upstream } = fixture();
   writeFileSync(join(root, "private.txt"), "private secret fixture\n");
   symlinkSync(join(root, "private.txt"), join(upstream, "external-file"));
-  symlinkSync(".", join(upstream, "cycle"));
   git(upstream, "add", ".");
   git(upstream, "commit", "-m", "Unsafe symlinks");
   source.sync();
   expect(() => source.snapshot("unsafe-run")).toThrow(/symlink|regular/i);
   expect(existsSync(join(root, "state/skill-snapshots/unsafe-run"))).toBe(false);
   expect(readFileSync(join(root, "private.txt"), "utf8")).toBe("private secret fixture\n");
+});
+
+test("escaping, cyclic, dangling, directory and backslash links cannot enter a snapshot", () => {
+  for (const [name, target] of [["escape", "../outside"], ["cycle", "cycle"], ["dangling", "missing.md"], ["directory", "skills"], ["backslash", "skills\\engineering"]]) {
+    const { root, source, upstream } = fixture();
+    symlinkSync(target!, join(upstream, name!));
+    git(upstream, "add", ".");
+    git(upstream, "commit", "-m", `Unsafe ${name} link`);
+    source.sync();
+    expect(() => source.snapshot(`unsafe-${name}`)).toThrow(/symlink|unsafe|regular|path/i);
+    expect(existsSync(join(root, "state/skill-snapshots", `unsafe-${name}`))).toBe(false);
+  }
+});
+
+test("inventory accepts upstream's plain-text description containing an unquoted colon without rewriting its body", () => {
+  const { source, upstream } = fixture();
+  const body = "---\nname: build-things\ndescription: Shared language for a factory: tasks and services.\ndisable-model-invocation: true\n---\nOriginal skill body.\n";
+  writeFileSync(join(upstream, "skills/engineering/build/SKILL.md"), body);
+  git(upstream, "commit", "-am", "Plain-text description like current upstream");
+  source.sync();
+  const snapshot = source.snapshot("plain-description");
+  expect(snapshot.skills[0]!.description).toBe("Shared language for a factory: tasks and services.");
+  expect(readFileSync(snapshot.skills[0]!.path, "utf8")).toBe(body);
 });
 
 test("a changed snapshot is refused instead of silently changing active instructions", () => {
