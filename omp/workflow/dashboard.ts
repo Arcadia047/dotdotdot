@@ -79,6 +79,7 @@ export function startDashboard(options: DashboardOptions): DashboardServer {
       if (request.headers.get("host") !== `127.0.0.1:${server.port}` || (request.headers.has("origin") && request.headers.get("origin") !== origin)) return json({ error: "Foreign host or origin rejected." }, 403);
       const url = new URL(request.url);
       if (url.search) return json({ error: "Query parameters are not supported." }, 400);
+      if (url.pathname === "/favicon.ico" && request.method === "GET") return new Response(null, { status: 204, headers });
       if (url.pathname === "/api/status" || url.pathname === "/api/control") {
         if (request.headers.get("authorization") !== `Bearer ${token}`) return json({ error: "Dashboard capability required." }, 401);
         if (url.pathname === "/api/status") {
