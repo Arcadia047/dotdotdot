@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { WorkRepository } from "./jobs";
@@ -142,6 +143,149 @@ test("a repeated job ID is refused before another branch is created", () => {
     .toThrow(/job id.*stable-id.*already/i);
   expect(store.list()).toEqual([first]);
   expect(git(repo, "branch", "--list", "feature/second")).toBe("");
+});
+
+test("archiving a cleaned ready job releases its branch and retains its historical record", () => {
+  const { repo, state, store, input } = fixture();
+  const first = store.submit({ ...input, id: "first-job" });
+  writeFileSync(join(first.worktree, "shared.txt"), "first accepted result\n");
+  git(first.worktree, "commit", "-am", "First accepted result");
+  const candidate = git(first.worktree, "rev-parse", "HEAD");
+  store.update(first.id, { status: "ready", candidate, attempt: 1 });
+  git(repo, "worktree", "remove", first.worktree);
+
+  const archived = store.archive(first.id);
+  const second = store.submit({ ...input, id: "second-job", dependsOn: [first.id] });
+  writeFileSync(join(second.worktree, "shared.txt"), "second result\n");
+  git(second.worktree, "commit", "-am", "Advance reused branch");
+
+  expect(archived).toMatchObject({ id: first.id, status: "ready", candidate, attempt: 1, archivedAt: expect.any(String) });
+  expect(second).toMatchObject({ base: candidate, branch: first.branch, dependsOn: [first.id] });
+  expect(store.archive(first.id)).toEqual(archived);
+  expect(store.get(first.id)).toEqual(archived);
+  expect(store.list()).toEqual([archived, second]);
+  expect(open(state).list()).toEqual([archived, second]);
+  expect(() => store.submit({ ...input, id: first.id, branch: "feature/another" }))
+    .toThrow(/job id.*first-job.*already/i);
+  expect(() => store.submit({ ...input, id: "third-job" })).toThrow(/branch.*second-job/i);
+});
+
+test("unfinished and actively owned jobs cannot be archived or release their branch", () => {
+  const { repo, store, input } = fixture();
+  const job = store.submit({ ...input, id: "retained-job" });
+  expect(() => store.archive(job.id)).toThrow(/ready/i);
+  const owned = store.update(job.id, { status: "ready", candidate: job.base, owner: "active-operation" });
+  git(repo, "worktree", "remove", job.worktree);
+
+  expect(() => store.archive(job.id)).toThrow(/owner|claimed/i);
+  expect(store.get(job.id)).toEqual(owned);
+  expect(() => store.submit({ ...input, id: "another-job" })).toThrow(/branch.*retained-job/i);
+  expect(() => store.archive("unknown")).toThrow(/unknown job/i);
+});
+
+test("archiving retains present clean, dirty and replaced worktree paths", () => {
+  const { root, repo, store, input } = fixture();
+  const job = store.submit(input);
+  const ready = store.update(job.id, { status: "ready", candidate: job.base });
+  expect(() => store.archive(job.id)).toThrow(/worktree.*present|remove.*worktree/i);
+  writeFileSync(join(job.worktree, "shared.txt"), "unfinished work\n");
+  writeFileSync(join(job.worktree, "untracked.txt"), "unaccounted work\n");
+
+  expect(() => store.archive(job.id)).toThrow(/worktree.*present|remove.*worktree/i);
+  expect(readFileSync(join(job.worktree, "shared.txt"), "utf8")).toBe("unfinished work\n");
+  expect(readFileSync(join(job.worktree, "untracked.txt"), "utf8")).toBe("unaccounted work\n");
+  expect(store.get(job.id)).toEqual(ready);
+  // A disappearing target does not make a replacement symlink an absent owned path.
+  git(job.worktree, "commit", "-am", "Retain changed file");
+  rmSync(join(job.worktree, "untracked.txt"));
+  git(repo, "worktree", "remove", job.worktree);
+  symlinkSync(join(root, "missing-target"), job.worktree);
+  expect(() => store.archive(job.id)).toThrow(/worktree.*present|remove.*worktree/i);
+  expect(lstatSync(job.worktree).isSymbolicLink()).toBe(true);
+});
+
+test("archiving requires a recorded commit that still matches the target branch tip", () => {
+  const { repo, store, input } = fixture();
+  const job = store.submit({ ...input, id: "candidate-job" });
+  writeFileSync(join(job.worktree, "shared.txt"), "changed candidate\n");
+  git(job.worktree, "commit", "-am", "Candidate result");
+  const candidate = git(job.worktree, "rev-parse", "HEAD");
+  const blob = git(job.worktree, "rev-parse", "HEAD:shared.txt");
+  git(repo, "worktree", "remove", job.worktree);
+  store.update(job.id, { status: "ready" });
+
+  for (const invalid of [undefined, "missing-revision", blob, "feature/first"]) {
+    const retained = store.update(job.id, { candidate: invalid });
+    expect(() => store.archive(job.id)).toThrow(/candidate.*commit/i);
+    expect(store.get(job.id)).toEqual(retained);
+  }
+  const stale = store.update(job.id, { candidate: job.base });
+  expect(() => store.archive(job.id)).toThrow(/candidate.*branch.*tip|branch.*tip.*candidate/i);
+  expect(store.get(job.id)).toEqual(stale);
+  git(repo, "branch", "-D", job.branch);
+  store.update(job.id, { candidate });
+  expect(() => store.archive(job.id)).toThrow(/branch|rev-parse/i);
+  expect(() => store.submit({ ...input, id: "another-job" })).toThrow(/branch.*candidate-job/i);
+});
+
+test("opening the original database format preserves jobs and permits branch reuse after archive", () => {
+  const { repo, state, store, input } = fixture();
+  const first = store.submit({ ...input, id: "old-first" });
+  const ready = store.update(first.id, { status: "ready", candidate: first.base });
+  const second = store.submit({ ...input, id: "old-second", branch: "feature/second", dependsOn: [first.id] });
+  store.close();
+  stores.splice(stores.indexOf(store), 1);
+  const legacy = new Database(join(state, "jobs.sqlite"), { create: true });
+  // Literal original on-disk format: compatibility input, not an assertion about storage.
+  legacy.exec(`DROP TABLE jobs;
+  CREATE TABLE jobs (
+    id TEXT PRIMARY KEY,
+    common_dir TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    record TEXT NOT NULL,
+    UNIQUE(common_dir, branch)
+  )`);
+  for (const job of [ready, second]) {
+    legacy.query("INSERT INTO jobs (id, common_dir, branch, record) VALUES (?, ?, ?, ?)")
+      .run(job.id, job.commonDir, job.branch, JSON.stringify(job));
+  }
+  legacy.close();
+
+  const migrated = open(state);
+  expect(migrated.get(first.id)).toEqual(ready);
+  expect(migrated.list()).toEqual([ready, second]);
+  expect(() => migrated.submit({ ...input, id: "before-cleanup" })).toThrow(/branch.*old-first/i);
+  git(repo, "worktree", "remove", first.worktree);
+  const archived = migrated.archive(first.id);
+  const next = migrated.submit({ ...input, id: "new-first", dependsOn: [first.id] });
+  expect(next.base).toBe(first.base);
+  expect(migrated.list()).toEqual([archived, second, next]);
+  expect(open(state).list()).toEqual([archived, second, next]);
+  expect(() => migrated.submit({ ...input, id: first.id, branch: "feature/third" })).toThrow(/job id.*old-first.*already/i);
+  expect(() => migrated.submit({ ...input, id: "duplicate-second", branch: second.branch })).toThrow(/branch.*old-second/i);
+});
+
+test("runtime updates cannot forge archive evidence or release a branch", () => {
+  const { store, input } = fixture();
+  const job = store.submit({ ...input, id: "protected-job" });
+  expect(() => store.update(job.id, { archivedAt: "2026-11-11T00:00:00.000Z" } as never))
+    .toThrow(/archivedAt.*cannot be changed/i);
+  expect(store.get(job.id)).toEqual(job);
+  expect(() => store.submit({ ...input, id: "another-job" })).toThrow(/branch.*protected-job/i);
+});
+
+test("archived job records remain immutable through runtime mutations", () => {
+  const { repo, store, input } = fixture();
+  const job = store.submit(input);
+  store.update(job.id, { status: "ready", candidate: job.base });
+  git(repo, "worktree", "remove", job.worktree);
+  const archived = store.archive(job.id);
+
+  expect(() => store.update(job.id, { status: "queued", candidate: undefined })).toThrow(/archived/i);
+  expect(() => store.claim(job.id, "another-operation")).toThrow(/archived/i);
+  expect(() => store.release(job.id, "another-operation")).toThrow(/archived/i);
+  expect(store.get(job.id)).toEqual(archived);
+  expect(store.archive(job.id)).toEqual(archived);
 });
 
 test("submission requires scoped acceptance, validation and an explicit valid branch", () => {

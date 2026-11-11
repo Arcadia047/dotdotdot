@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import type { Job, JobInput, JobPatch, JobStatus } from "./types";
 
@@ -31,14 +31,30 @@ export class WorkRepository {
     this.db.exec(`
       PRAGMA busy_timeout = 5000;
       PRAGMA journal_mode = WAL;
+    `);
+    this.db.transaction(() => {
+      const columns = this.db.query("PRAGMA table_info(jobs)").all() as { name: string }[];
+      if (columns.length && !columns.some((column) => column.name === "active")) {
+        this.db.exec("ALTER TABLE jobs RENAME TO jobs_v1");
+      }
+      this.db.exec(`
       CREATE TABLE IF NOT EXISTS jobs (
         id TEXT PRIMARY KEY,
         common_dir TEXT NOT NULL,
         branch TEXT NOT NULL,
         record TEXT NOT NULL,
-        UNIQUE(common_dir, branch)
+        active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1))
       );
-    `);
+      `);
+      if (columns.length && !columns.some((column) => column.name === "active")) {
+        this.db.exec(`
+          INSERT INTO jobs (id, common_dir, branch, record)
+            SELECT id, common_dir, branch, record FROM jobs_v1 ORDER BY rowid;
+          DROP TABLE jobs_v1;
+        `);
+      }
+      this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS jobs_active_branch ON jobs (common_dir, branch) WHERE active = 1");
+    }).immediate();
   }
 
   submit(input: JobInput): Job {
@@ -142,7 +158,7 @@ export class WorkRepository {
     if (this.get(id)) throw new Error(`Job ID ${id} already exists; inspect it or choose a unique ID.`);
     const repo = realpathSync(executeGit(input.repo, ["rev-parse", "--show-toplevel"]));
     const commonDir = realpathSync(executeGit(repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"]));
-    const conflict = this.db.query("SELECT id FROM jobs WHERE common_dir = ? AND branch = ?")
+    const conflict = this.db.query("SELECT id FROM jobs WHERE common_dir = ? AND branch = ? AND active = 1")
       .get(commonDir, input.branch) as { id: string } | null;
     if (conflict) {
       throw new Error(`Branch ${input.branch} is already managed by job ${conflict.id}; inspect that job or choose another branch.`);
@@ -199,6 +215,34 @@ export class WorkRepository {
       .map((row) => JSON.parse(row.record));
   }
 
+  /** Trusted host runtime only, after safely removing the owned worktree. */
+  archive(id: string): Job {
+    return this.db.transaction(() => {
+      const job = this.get(id);
+      if (!job) throw new Error(`Unknown job ${id}; inspect the local job list.`);
+      if (job.archivedAt) return job;
+      if (job.status !== "ready") throw new Error(`Job ${id} must be ready before archiving; retain unfinished work.`);
+      if (job.owner) throw new Error(`Job ${id} is claimed by ${job.owner}; release its active owner before archiving.`);
+      if (lstatSync(job.worktree, { throwIfNoEntry: false })) {
+        throw new Error(`Owned worktree path ${job.worktree} is still present; safely remove the reconciled worktree before archiving.`);
+      }
+      let candidate: string;
+      try {
+        if (!job.candidate) throw new Error("Missing candidate");
+        candidate = executeGit(job.commonDir, ["rev-parse", "--verify", "--end-of-options", `${job.candidate}^{commit}`]);
+        if (candidate !== job.candidate) throw new Error("Candidate is not a resolved revision");
+      } catch {
+        throw new Error(`Job ${id} candidate must record an existing resolved commit before archiving.`);
+      }
+      const tip = executeGit(job.commonDir, ["rev-parse", "--verify", "--end-of-options", `refs/heads/${job.branch}^{commit}`]);
+      if (tip !== candidate) throw new Error(`Job ${id} candidate no longer matches branch ${job.branch} tip; retain the branch claim and reconcile it.`);
+      job.archivedAt = new Date().toISOString();
+      this.save(job);
+      this.db.query("UPDATE jobs SET active = 0 WHERE id = ?").run(id);
+      return this.get(id)!;
+    }).immediate();
+  }
+
   /** Trusted host runtime only. Readiness enforcement belongs to the manager. */
   update(id: string, patch: JobPatch): Job {
     const fields = new Set(["status", "attempt", "candidate", "owner", "blocker"]);
@@ -233,6 +277,7 @@ export class WorkRepository {
     return this.db.transaction(() => {
       const job = this.get(id);
       if (!job) throw new Error(`Unknown job ${id}; inspect the local job list.`);
+      if (job.archivedAt) throw new Error(`Job ${id} is archived; its historical record cannot be changed.`);
       apply(job);
       this.save(job);
       return this.get(id)!;

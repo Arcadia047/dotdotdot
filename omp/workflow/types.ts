@@ -49,6 +49,8 @@ export interface Job {
   blocker?: string;
   createdAt: string;
   updatedAt: string;
+  /** The owned worktree was removed and the branch claim released. */
+  archivedAt?: string;
 }
 
 /** Host runtime metadata; this interface must not be exposed as an agent tool. */
