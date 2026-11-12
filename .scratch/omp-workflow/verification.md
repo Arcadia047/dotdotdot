@@ -19,7 +19,7 @@ Runtime acceptance completed at `d2b7b2869fac8c22af5c0806481d8803297f8305`, befo
 - Native OMP extension/symlink discovery and `/work skills status` captured current planning guidance without a model request; no jobs database was opened. Evidence: `/var/folders/2x/3rpwl8bj5dj7xrwllrzph4lh0000gn/T/omp-entry-load-oi43cgqo`.
 - Independent [Standards](reviews/runtime-standards.md): no outstanding findings. Independent [Spec](reviews/runtime-spec.md): no remaining actionable findings. Review-driven defects were repaired and independently rechecked.
 
-The browser dashboard is an approved scope addition recorded in [dashboard-spec.md](dashboard-spec.md), with its own pending verification; runtime acceptance above does not claim that the new UI is finished.
+The subsequently requested browser dashboard is complete; its final 123-test gate, native OMP/browser checks and independent reviews are recorded in [dashboard-verification.md](dashboard-verification.md). Runtime evidence above remains the original milestone.
 
 The approved public seams are the work manager and the supported OMP process adapter. Disposable real Git repositories exercise independent branches, forward dependencies, exclusive branch claims, combined-result failures, bounded repair, dirty originals, stale evidence, process interruption, and cleanup. Controlled worker responses plant failures and malformed reports; actual validation commands run as owned processes.
 

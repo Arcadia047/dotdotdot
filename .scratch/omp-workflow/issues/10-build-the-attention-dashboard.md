@@ -6,7 +6,13 @@
 
 **Status:** ready-for-agent
 
-- [ ] Keep the default view concise with actionable root blockers and real counts.
-- [ ] Implement empty/loading/error/disconnected, long-text and narrow-screen states.
-- [ ] Verify actual browser interactions, keyboard access and screenshots at desktop/tablet/phone widths.
-- [ ] Keep assets local and task text safe; record design and validation evidence.
+**Resolution:** completed
+
+- [x] Keep the default view concise with actionable root blockers and real counts.
+- [x] Implement empty/loading/error/disconnected, long-text and narrow-screen states.
+- [x] Verify actual browser interactions, keyboard access and screenshots at desktop/tablet/phone widths.
+- [x] Keep assets local and task text safe; record design and validation evidence.
+
+## Validation
+
+Completed on `codex/omp-work-manager`. See [dashboard acceptance](../dashboard-verification.md), [Standards](../reviews/dashboard-standards.md), and [Spec](../reviews/dashboard-spec.md).

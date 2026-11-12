@@ -119,14 +119,23 @@ task, branch, candidate, dependencies, workspace and validation evidence. Retain
 validation from an earlier attempt or an archived workspace is labeled historical;
 only current ready evidence is presented as current.
 
-The browser can pause dispatch, resume dispatch, or explicitly resume a blocked
-or interrupted job through the same manager's reconciliation rules. Acceptance of
+Related tickets show their branch checks and integration checks separately, with
+each scope's branch, revision, reviews and receipt. Waiting identifies unresolved
+prerequisites, paused dispatch or capacity. After a crash, retained work is matched
+against the live controller's ownership and shown as needing recovery; unrelated
+work can continue while that retained job is reconciled.
+
+The browser can pause dispatch or resume work through the same manager's
+reconciliation rules. **Resume all work** also reconciles blocked/interrupted jobs;
+resuming one job also unpauses dispatch, which the paused button label makes clear.
+Acceptance of
 a resume request does not establish readiness. Errors remain visible, and a lost
 connection marks the view stale and disables its controls. Terminal status and
 completion notices remain short and point to the dashboard for details.
 
 The dashboard is opt-in, uses bundled local assets, binds only to `127.0.0.1` on
-an available port, and requests no model. Its per-start URL fragment supplies the
+an available port. Viewing status requests no model; resume can continue accepted
+jobs through the locally configured provider route. Its per-start URL fragment supplies the
 browser's private access key; keep the full URL local. There are no arbitrary file
 routes, publishing controls, external uploads, or new settings. `/work dashboard
 stop` closes browser access while leaving the manager available. OMP session
@@ -198,7 +207,15 @@ bun test workflow
 cd ..
 python3 -m unittest discover -s tests -p 'test_omp_workflow_setup.py' -v
 ./scripts/check
+python3 omp/workflow/fixtures/real-dashboard-smoke.py
 ```
+
+For a browser preview backed by disposable Git branches and real local check
+receipts, run `bun omp/workflow/fixtures/dashboard-preview.ts` from this checkout's
+root. The page is labeled **Synthetic preview**; its reviewers are controlled
+fixtures, and it uses no work credentials or external model requests. Ctrl-C
+closes it. The native dashboard smoke uses an isolated OMP profile and explicitly
+bypasses system proxies for its local HTTP requests.
 
 The controlled fixtures use disposable Git repositories and host/process
 boundaries. The real-binary RPC fixtures under `workflow/fixtures` use isolated
