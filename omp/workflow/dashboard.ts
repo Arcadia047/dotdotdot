@@ -8,12 +8,9 @@ import type { Job } from "./types";
 export interface DashboardServer { url: string; close(): Promise<void> }
 interface DashboardOptions { manager: WorkManager; stateDir: string; profile?: string; assetsDir?: string }
 
-function needsRecovery(job: Job, controllerActive: boolean): boolean {
-  return !controllerActive && ["running", "checking", "reviewing", "integrating"].includes(job.status);
-}
-export function dashboardBucket(job: Job, controllerActive = true): DashboardBucket {
+export function dashboardBucket(job: Job, recovery = false): DashboardBucket {
   if (job.archivedAt) return "archived";
-  if (needsRecovery(job, controllerActive)) return "attention";
+  if (recovery) return "attention";
   if (job.blocker?.startsWith("Blocked by dependency:")) return "waiting";
   if (["blocked", "interrupted"].includes(job.status)) return "attention";
   if (job.status === "ready") return "ready";
@@ -47,8 +44,8 @@ function snapshot(options: DashboardOptions): DashboardSnapshot {
   // status() rechecks ready receipts and demotes expired evidence through the manager.
   const status = options.manager.status();
   const jobs: DashboardJob[] = status.jobs.map((job) => {
-    const group = dashboardBucket(job, status.controllerActive);
-    const recovery = needsRecovery(job, status.controllerActive);
+    const recovery = status.recoveryJobIds.includes(job.id);
+    const group = dashboardBucket(job, recovery);
     return { id: job.id, title: job.task.split("\n")[0]!.replace(/\s+/g, " ").slice(0, 120), task: job.task, repo: job.repo, repoName: basename(job.repo),
       branch: job.branch, candidate: job.candidate, worktree: job.worktree, status: job.status, bucket: group, phase: recovery ? "recovery" : job.status,
       attempt: job.attempt, kind: job.kind, dependsOn: job.dependsOn, integrationTarget: job.integrationTarget, updatedAt: job.updatedAt, archivedAt: job.archivedAt,
@@ -105,7 +102,7 @@ export function startDashboard(options: DashboardOptions): DashboardServer {
           if (body.id) {
             const status = options.manager.status();
             const job = status.jobs.find((job) => job.id === body.id);
-            if (!job || dashboardBucket(job, status.controllerActive) !== "attention") return json({ error: "Only a job needing attention can be resumed individually." }, 409);
+            if (!job || dashboardBucket(job, status.recoveryJobIds.includes(job.id)) !== "attention") return json({ error: "Only a job needing attention can be resumed individually." }, 409);
           }
           actionError = undefined;
           if (body.action === "pause") options.manager.pause();

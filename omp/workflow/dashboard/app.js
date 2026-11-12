@@ -57,7 +57,7 @@
   }
   function shouldResumeDispatch() {
     const snapshot = state.snapshot;
-    return Boolean(snapshot && (snapshot.paused || (!snapshot.controllerActive && (snapshot.counts.waiting || snapshot.counts.attention))));
+    return Boolean(snapshot && (snapshot.paused || recoveryNeeded() || (!snapshot.controllerActive && (snapshot.counts.waiting || snapshot.counts.attention))));
   }
   function phaseLabel(job) {
     if (job.bucket === "archived") return "Archived";

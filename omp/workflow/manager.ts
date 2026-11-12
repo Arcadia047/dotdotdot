@@ -60,7 +60,7 @@ export class WorkManager {
 		this.wake();
 		return jobs;
 	}
-	status(): { paused: boolean; controllerActive: boolean; jobs: Job[] } {
+	status(): { paused: boolean; controllerActive: boolean; recoveryJobIds: string[]; jobs: Job[] } {
 		const gate = new QualityGate({ stateDir: join(this.options.stateDir, "evidence"), worker: this.options.worker, modelFor: () => this.options.model });
 		for (const job of this.repository.list()) {
 			if (job.status !== "ready" || ("archivedAt" in job && job.archivedAt)) continue;
@@ -72,7 +72,13 @@ export class WorkManager {
 				this.repository.update(job.id, { status: "interrupted", blocker: `Ready evidence expired: ${error instanceof Error ? error.message : String(error)}` });
 			}
 		}
-		return { paused: this.isPaused(), controllerActive: Boolean(this.liveController()), jobs: this.repository.list() };
+		const controller = this.liveController();
+		const jobs = this.repository.list();
+		// A new controller can supervise unrelated work while old claims still need reconciliation.
+		const recoveryJobIds = jobs.filter((job) => !job.archivedAt &&
+			(["running", "checking", "reviewing", "integrating"].includes(job.status) || (job.status === "queued" && job.owner)) &&
+			(!controller || job.owner !== controller.owner)).map((job) => job.id);
+		return { paused: this.isPaused(), controllerActive: Boolean(controller), recoveryJobIds, jobs };
 	}
 	async start(): Promise<Job[]> {
 		if (this.closed) throw new Error("This work manager is closed.");

@@ -224,3 +224,47 @@ test("after a host crash the browser exposes guarded recovery while a live contr
     expect(implementations).toBe(0);
   } finally { if (child.exitCode === null) { child.kill("SIGKILL"); await child.exited; } }
 }, 30_000);
+
+test("an orphaned job still needs browser recovery while a new controller runs unrelated work", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "omp-dashboard-mixed-crash-test-"))); roots.push(root);
+  const repo = repository(root), stateDir = join(root, "state"), marker = join(root, "committed.marker");
+  writeFileSync(join(repo, "value.txt"), "original\n"); executeGit(repo, ["add", "."]); executeGit(repo, ["commit", "-m", "Crash fixture input"]);
+  const child = Bun.spawn([process.execPath, fileURLToPath(new URL("./fixtures/crash-manager.ts", import.meta.url)), repo, stateDir, marker], { stdout: "pipe", stderr: "pipe" });
+  try {
+    const deadline = Date.now() + 10_000;
+    while (!existsSync(marker) && Date.now() < deadline && child.exitCode === null) await Bun.sleep(10);
+    expect(existsSync(marker)).toBe(true);
+    child.kill("SIGKILL"); await child.exited;
+    expect(child.signalCode).toBe("SIGKILL");
+    let started!: () => void, repeatedImplementations = 0;
+    const running = new Promise<void>((resolve) => { started = resolve; });
+    const manager = new WorkManager({ stateDir, model: { provider: "fixture", id: "local" }, worker: { async run(request) {
+      if (request.role === "implementer" && request.cwd.endsWith("/unrelated")) {
+        started();
+        await new Promise<never>((_resolve, reject) => request.signal!.addEventListener("abort", () => reject(new Error("Fixture stopped")), { once: true }));
+      } else if (request.role === "implementer") repeatedImplementations++;
+      return { text: "Review retained commit", model: request.model, report: { revision: executeGit(request.cwd, ["rev-parse", "HEAD"]), verdict: "pass", findings: [] } };
+    } } }); managers.push(manager);
+    manager.submit([{ id: "unrelated", repo, branch: "feature/unrelated", task: "Independent authorized work", acceptance: ["Keep independent"], checks: [{ name: "value", command: "test -f value.txt" }] }]);
+    void manager.start(); await running;
+    const original = manager.status().jobs;
+    const dashboard = startDashboard({ manager, stateDir }); dashboards.push(dashboard);
+    const url = new URL(dashboard.url), headers = { Authorization: `Bearer ${new URLSearchParams(url.hash.slice(1)).get("token")}` };
+    const status = async () => (await fetch(new URL("/api/status", url), { headers })).json();
+    const snapshot = await status();
+    expect(snapshot).toMatchObject({ controllerActive: true, counts: { active: 1, attention: 1 }, jobs: [
+      { id: "crash", status: "running", bucket: "attention", phase: "recovery", canResume: true },
+      { id: "unrelated", status: "running", bucket: "active", canResume: false },
+    ] });
+    expect((await status()).counts).toMatchObject({ active: 1, attention: 1 });
+    expect(manager.status().jobs).toEqual(original);
+    expect(snapshot.jobs.every((job: { owner?: string }) => job.owner === undefined)).toBe(true);
+    const response = await fetch(new URL("/api/control", url), { method: "POST", headers: { ...headers, Origin: url.origin, "Content-Type": "application/json" }, body: '{"action":"resume","id":"crash"}' });
+    expect(response.status).toBe(202); expect(await response.json()).toEqual({ accepted: true });
+    for (let i = 0; i < 200 && manager.status().jobs.find((job) => job.id === "crash")!.status !== "ready"; i++) await Bun.sleep(10);
+    expect(await status()).toMatchObject({ controllerActive: true, counts: { active: 1, attention: 0, ready: 1 }, jobs: [
+      { id: "crash", status: "ready", canResume: false }, { id: "unrelated", status: "running", bucket: "active", canResume: false },
+    ] });
+    expect(repeatedImplementations).toBe(0);
+  } finally { if (child.exitCode === null) { child.kill("SIGKILL"); await child.exited; } }
+}, 30_000);
